@@ -260,6 +260,48 @@ main() {
     # Confirm settings
     confirm_settings
 
+    # Check if data directory exists and has content
+    if [ -d "$DATA_DIR" ] && [ "$(ls -A "$DATA_DIR" 2>/dev/null | grep -v '\.gitkeep$' | wc -l)" -gt 0 ]; then
+        echo_warning "Existing data directory found: $DATA_DIR"
+        echo_warning "This directory contains:"
+        ls -la "$DATA_DIR" | head -10
+        if [ "$(ls -A "$DATA_DIR" 2>/dev/null | grep -v '\.gitkeep$' | wc -l)" -gt 8 ]; then
+            echo_warning "... and more files"
+        fi
+        echo ""
+        echo_yellow "The data directory is not empty. This may cause issues with the new setup."
+        echo ""
+        
+        set +e
+        menu_select "How would you like to proceed?" \
+            "Clean the data directory (recommended)" \
+            "Continue with existing data (may cause conflicts)" \
+            "Cancel setup"
+        local cleanup_choice=$?
+        set -e
+        
+        case $cleanup_choice in
+            0)
+                echo_info "Cleaning data directory..."
+                if [ -f "./clean.sh" ]; then
+                    ./clean.sh --data-only --quiet
+                else
+                    # Fallback cleanup
+                    find "$DATA_DIR" -mindepth 1 ! -name '.gitkeep' -delete
+                fi
+                echo_success "Data directory cleaned."
+                ;;
+            1)
+                echo_warning "Continuing with existing data. This may cause configuration conflicts."
+                ;;
+            2)
+                echo_red "Setup cancelled."
+                exit 1
+                ;;
+        esac
+        echo ""
+    fi
+
     # Create directories
     echo_info "Creating directories..."
     mkdir -p "$INSTALL_DIR"

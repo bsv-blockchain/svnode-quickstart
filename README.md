@@ -325,11 +325,11 @@ cd ./bsv-data
 # Using pigz -1 for fastest compression (less CPU, larger file)
 # pigz compression levels: -1 (fastest) to -9 (best compression)
 # Default is -6, use -1 for speed when bandwidth isn't a constraint
-tar -cf - blocks chainstate database frozentxos merkle | pv | pigz -1 > ../mainnet-snapshot-latest.tar.gz
+tar -cf - blocks chainstate frozentxos merkle | pv | pigz -1 > ../mainnet-snapshot-latest.tar.gz
 
 # For testnet, navigate to testnet3 subdirectory first
 cd testnet3
-tar -cf - blocks chainstate database frozentxos merkle | pv | pigz -1 > ../../testnet-snapshot-latest.tar.gz
+tar -cf - blocks chainstate frozentxos merkle | pv | pigz -1 > ../../testnet-snapshot-latest.tar.gz
 ```
 
 3. **Verify the archive**:
@@ -351,7 +351,7 @@ sha256sum testnet-snapshot-latest.tar.gz > testnet-snapshot-latest.tar.gz.sha256
 ```
 
 ### Important Notes
-- **Only include these directories**: `blocks/`, `chainstate/`, `database/`, `frozentxos/`, `merkle/`
+- **Only include these directories**: `blocks/`, `chainstate/`, `frozentxos/`, `merkle/`
 - **Exclude**: `bitcoin.conf`, `bitcoind.log`, `peers.dat`, `banlist.dat`, and other config/log files
 - **Node must be stopped**: Never create snapshots while the node is running
 - **Pruned nodes only**: Full node snapshots would be prohibitively large
