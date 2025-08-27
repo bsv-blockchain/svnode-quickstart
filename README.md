@@ -2,25 +2,6 @@
 
 A comprehensive setup script and template collection for quickly deploying SV Node on the BSV Blockchain with interactive configuration, automatic installation, and flexible deployment options.
 
-## Features
-
-- **Interactive Setup Wizard**: Guided configuration with sensible defaults
-- **Multiple Network Support**: Mainnet, Testnet, and Regtest
-- **Flexible Node Types**: Choose between pruned (minimal disk usage) or full node
-- **Simple Deployment**: Direct binary execution with daemon mode and helper scripts
-- **Blockchain Snapshots**: HTTP-based incremental sync using wget for faster initial setup
-- **System Requirements Check**: Validates prerequisites before installation
-- **Automatic Configuration**: Generates optimized `bitcoin.conf` based on your choices
-- **Management Scripts**: Convenient scripts for starting, stopping, and monitoring your node
-
-## Prerequisites
-
-- Linux operating system (Ubuntu, Debian, CentOS, Fedora, Arch, etc.)
-- At least 200GB free disk space (pruned) or 15TB (full node)
-- 8GB+ RAM recommended
-- Basic command-line tools: `wget` or `curl`, `tar`, `sha256sum`, `openssl`
-- `sudo` access or root privileges for installation
-
 ## Quick Start
 
 1. Clone this repository:
@@ -66,7 +47,7 @@ chmod +x setup.sh
 ### Node Types
 
 - **Pruned Node**: Reduces disk usage by removing old spent transaction data (recommended for most users)
-  - Disk requirement: ~200GB
+  - Disk requirement: ~500GB
   - Retains all unspent transaction outputs (UTXOs) - critical for validation
   - Only removes historical spent transaction data from old blocks
   - Cannot serve complete historical blocks to other nodes
@@ -85,19 +66,11 @@ chmod +x setup.sh
   - Incremental updates: Only downloads new files on subsequent syncs
   - Resume support: Continues from where it left off if interrupted
   - Mainnet: ~160GB of pruned blockchain data
-  - Testnet: ~200GB of pruned blockchain data
+  - Testnet: ~20GB of pruned blockchain data
   
   **Note on Pruned Snapshots**: Pruned snapshots contain all unspent transaction outputs (UTXOs) but have removed historical spent transaction data from old blocks. This preserves your node's ability to validate new transactions and blocks while significantly reducing storage requirements. All consensus-critical data remains intact - only historical spent transactions that are no longer needed for validation are removed. Your node maintains full security and validation capabilities.
   
 - **Genesis Sync**: Start from block 0 and sync the entire blockchain (slower but builds complete history)
-
-### Simple Management
-
-The setup creates a straightforward deployment using the bitcoind daemon mode with helper scripts:
-- **Daemon Mode**: Uses `daemon=1` in bitcoin.conf for background operation
-- **Helper Scripts**: Simple start/stop/restart scripts in the root directory
-- **Graceful Shutdown**: Uses bitcoin-cli stop for clean shutdowns
-- **CLI Access**: Convenient wrapper script for bitcoin-cli commands
 
 ## Usage
 
@@ -206,31 +179,13 @@ sudo ufw deny 8332
 
 2. Verify configuration:
 ```bash
-cat /var/lib/bsv-data/bitcoin.conf
+cat ./bsv-data/bitcoin.conf
 ```
 
 3. Check logs:
 ```bash
 tail -f ./bsv-data/bitcoind.log
 ```
-
-### Insufficient Disk Space
-
-- Consider using a pruned node instead of full node
-- Move data directory to a larger disk
-- Use the snapshot download option for faster initial sync
-
-### Connection Issues
-
-- Ensure ports 8333 (mainnet) or 18333 (testnet) are not blocked
-- Check firewall settings
-- Verify network connectivity
-
-### High Memory Usage
-
-- Adjust `dbcache` setting in bitcoin.conf
-- Consider system memory limits in systemd service
-- Use pruned mode to reduce memory requirements
 
 ## Advanced Configuration
 
@@ -241,64 +196,6 @@ Edit the configuration file after installation:
 ```bash
 nano ./bsv-data/bitcoin.conf
 ./restart.sh
-```
-
-### Performance Tuning
-
-Key settings in bitcoin.conf:
-
-```ini
-# Cache size in MB (default: 4000)
-dbcache=8000
-
-# Maximum connections
-maxconnections=125
-
-# Memory pool size in MB
-maxmempool=3000
-
-# Upload limit in MB per day
-maxuploadtarget=5000
-```
-
-### Security Hardening
-
-1. Restrict RPC access:
-```ini
-rpcallowip=127.0.0.1
-rpcbind=127.0.0.1
-```
-
-2. Use strong RPC credentials (generated automatically during setup)
-
-3. Enable firewall rules (if needed):
-```bash
-sudo ufw allow 8333/tcp  # Mainnet P2P
-sudo ufw allow 8332/tcp  # RPC (only if accessing externally)
-```
-
-## Backup and Recovery
-
-### Backup Important Files
-
-```bash
-# Manual backup
-tar -czf svnode_backup.tar.gz \
-  ./bsv-data/bitcoin.conf \
-  ./bsv-data/peers.dat
-```
-
-### Restore from Backup
-
-```bash
-# Stop the node first
-./stop.sh
-
-# Restore files
-tar -xzf svnode_backup.tar.gz
-
-# Start the node
-./start.sh
 ```
 
 ## Cleanup
@@ -355,8 +252,7 @@ To update your SV Node to a newer version:
 
 1. Stop the current node
 2. Download the new version using `lib/download_node.sh`
-3. Update the symlinks
-4. Start the node
+3. Start the node
 
 ```bash
 # Example update process
