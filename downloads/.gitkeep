@@ -1,0 +1,6 @@
+# This file ensures the downloads directory is tracked by git
+# All other contents of this directory are ignored by .gitignore
+# This directory contains temporary downloads like:
+# - SVNode binary releases
+# - Blockchain snapshots
+# - Checksum files
