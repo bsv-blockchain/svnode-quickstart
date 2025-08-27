@@ -6,7 +6,7 @@ A comprehensive setup script and template collection for quickly deploying SV No
 
 1. Clone this repository:
 ```bash
-git clone https://github.com/yourusername/svnode-quickstart.git
+git clone https://github.com/bsv-blockchain/svnode-quickstart.git
 cd svnode-quickstart
 ```
 
