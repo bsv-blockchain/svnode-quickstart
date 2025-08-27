@@ -295,7 +295,7 @@ main() {
     echo "  Start SVNode:    ./start.sh"
     echo "  Stop SVNode:     ./stop.sh"
     echo "  Restart SVNode:  ./restart.sh"
-    echo "  Use CLI:         ./b.sh <command>"
+    echo "  Use CLI:         ./cli.sh <command>"
     # Show network-specific log path
     local log_path
     if [[ "$NETWORK" == "testnet" ]]; then
@@ -308,9 +308,9 @@ main() {
     echo "  View logs:       tail -f ${log_path}"
     echo ""
     echo "Examples:"
-    echo "  ./b.sh getblockchaininfo"
-    echo "  ./b.sh getpeerinfo"
-    echo "  ./b.sh help"
+    echo "  ./cli.sh getblockchaininfo"
+    echo "  ./cli.sh getpeerinfo"
+    echo "  ./cli.sh help"
     echo ""
     echo_info "Configuration file: ${DATA_DIR}/bitcoin.conf"
     echo_info "Data directory: ${DATA_DIR}"

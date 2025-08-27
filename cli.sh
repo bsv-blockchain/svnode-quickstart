@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Bitcoin CLI wrapper script
-# Usage: ./b.sh [bitcoin-cli arguments]
+# Usage: ./cli.sh [bitcoin-cli arguments]
 
 cd $(dirname "$0")
 

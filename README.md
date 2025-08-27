@@ -33,7 +33,7 @@ chmod +x setup.sh
 
 6. Check status:
 ```bash
-./b.sh getblockchaininfo
+./cli.sh getblockchaininfo
 ```
 
 ## Configuration Options
@@ -89,9 +89,9 @@ Simple commands to manage your SV Node:
 ./restart.sh
 
 # Use bitcoin-cli
-./b.sh getinfo
-./b.sh getblockchaininfo
-./b.sh getpeerinfo
+./cli.sh getinfo
+./cli.sh getblockchaininfo
+./cli.sh getpeerinfo
 
 # View logs (network-specific)
 # Mainnet:
@@ -133,7 +133,7 @@ This configuration ensures the RPC interface is only accessible from the local m
 
 ```bash
 # Using the provided CLI wrapper
-./b.sh getblockchaininfo
+./cli.sh getblockchaininfo
 
 # Or directly with bitcoin-cli
 ./bsv/bin/bitcoin-cli -conf=./bsv-data/bitcoin.conf getinfo
@@ -236,7 +236,7 @@ cd /workspace
 
 # Test the installation
 ./start.sh
-./b.sh getblockchaininfo
+./cli.sh getblockchaininfo
 ./stop.sh
 
 # Clean up when done
@@ -286,4 +286,4 @@ This setup script is provided as-is without warranty. Always verify configuratio
 
 The blockchain snapshots available at https://svnode-snapshots.bsvb.tech/ are provided as-is by the BSV Association. While these snapshots can significantly speed up initial node setup, it's up to each user to decide whether to trust these pre-synced snapshots or perform a full sync from the genesis block. Syncing from genesis takes longer but ensures you independently validate the entire blockchain history instead of only the new blocks and transactions coming in after the snapshot date.
 
-When using snapshots, SV Node will automatically validate the loaded blockchain data on startup, verifying block headers, chain integrity, and the UTXO set. You can also run `./b.sh verifychain` for additional verification.
+When using snapshots, SV Node will automatically validate the loaded blockchain data on startup, verifying block headers, chain integrity, and the UTXO set. You can also run `./cli.sh verifychain` for additional verification.

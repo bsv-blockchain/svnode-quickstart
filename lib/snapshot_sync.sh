@@ -72,17 +72,17 @@ install_rclone() {
     echo_info "rclone can be installed automatically using the official installer:"
     echo_info "  curl https://rclone.org/install.sh | sudo bash"
     echo ""
-    
+
     read -p "$(echo_yellow "Install rclone automatically? [y/N]: ")" response
     response=${response:-N}
-    
+
     if [[ ! "$response" =~ ^[Yy]$ ]]; then
         echo_info "Skipping rclone installation."
         echo_info "Please install rclone manually and run the sync again:"
         echo_info "  curl https://rclone.org/install.sh | sudo bash"
         return 1
     fi
-    
+
     echo_info "Installing rclone..."
     if command -v sudo &> /dev/null; then
         if curl -s https://rclone.org/install.sh | sudo bash; then
@@ -105,12 +105,12 @@ sync_snapshot() {
     local network="$1"
     local data_dir="$2"
     local base_url="${SNAPSHOT_BASE_URL}/${network}/"
-    
+
     echo_info "Syncing ${network} snapshot from: ${base_url}"
     echo_info "Destination: ${data_dir}"
     echo_warning "This may take several hours depending on your connection speed."
     echo ""
-    
+
     # Check if rclone is available, install if needed
     if ! command -v rclone &> /dev/null; then
         if ! install_rclone; then
@@ -118,21 +118,21 @@ sync_snapshot() {
             return 1
         fi
     fi
-    
+
     # Determine if this is an update
     if check_existing_data "$data_dir" "$network"; then
         echo_info "Updating existing blockchain data..."
     else
         echo_info "Performing initial blockchain sync..."
     fi
-    
+
     echo_info "Starting rclone sync with progress display..."
     echo_info "Source: ${base_url}"
     echo ""
-    
+
     # Use rclone sync with HTTP backend
     # Use --http-url parameter with :http: remote
-    
+
     if ! rclone sync ":http:" "${data_dir}" \
                     --http-url "${base_url}" \
                     --progress \
@@ -155,7 +155,7 @@ sync_snapshot() {
         echo_error "rclone sync failed."
         return 1
     fi
-    
+
     echo ""
     echo_success "Snapshot sync completed successfully."
     return 0
@@ -266,7 +266,7 @@ main() {
     echo_info "When you start the node, it will validate the data and continue syncing."
     echo_warning "Initial validation may take 30-60 minutes."
     echo_info "The node automatically verifies blockchain integrity on startup."
-    echo_info "For additional verification, you can run: ./b.sh verifychain"
+    echo_info "For additional verification, you can run: ./cli.sh verifychain"
     echo ""
 
     return 0
