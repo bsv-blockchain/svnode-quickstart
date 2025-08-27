@@ -84,7 +84,7 @@ EOF
         cat << EOF
 # Tuning options (Mainnet)
 maxmempool=16GB
-dbcache=32GB
+dbcache=16GB
 maxsigcachesize=256MB
 maxscriptcachesize=256MB
 threadsperblock=16
@@ -104,7 +104,7 @@ EOF
         cat << EOF
 # Tuning options (Testnet - reduced)
 maxmempool=4GB
-dbcache=8GB
+dbcache=2GB
 maxsigcachesize=128MB
 maxscriptcachesize=128MB
 threadsperblock=8
