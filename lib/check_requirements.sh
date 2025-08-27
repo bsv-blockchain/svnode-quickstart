@@ -122,7 +122,7 @@ check_dependencies() {
     local missing_deps=()
     
     # Check for required commands
-    local commands=("wget" "curl" "tar" "sha256sum" "openssl")
+    local commands=("curl" "tar" "sha256sum" "openssl")
     
     for cmd in "${commands[@]}"; do
         if ! command -v "$cmd" &> /dev/null; then
@@ -132,6 +132,15 @@ check_dependencies() {
             echo_success "Found: $cmd"
         fi
     done
+    
+    # Check for rclone (required for snapshots)
+    if command -v rclone &> /dev/null; then
+        echo_success "Found: rclone (required for snapshots)"
+    else
+        echo_warning "Missing: rclone"
+        echo_warning "  rclone is required for blockchain snapshot sync"
+        echo_info "  you will be prompted to install it if you choose snapshots"
+    fi
     
     # Check for sudo/su access
     if command -v sudo &> /dev/null; then

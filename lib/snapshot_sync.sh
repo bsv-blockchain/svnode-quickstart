@@ -19,15 +19,13 @@ if [ -z "$NETWORK" ] || [ -z "$DATA_DIR" ]; then
     exit 1
 fi
 
-# Snapshot sources
-declare -A SNAPSHOT_URLS=(
-    ["mainnet"]="https://svnode-snapshots.bsvb.tech/mainnet-snapshot-latest.tar.gz"
-    ["testnet"]="https://svnode-snapshots.bsvb.tech/testnet-snapshot-latest.tar.gz"
-)
+# Snapshot base URL
+SNAPSHOT_BASE_URL="https://svnode-snapshots.bsvb.tech"
 
+# Snapshot sizes (approximate)
 declare -A SNAPSHOT_SIZES=(
     ["mainnet"]="160GB"
-    ["testnet"]="20GB"
+    ["testnet"]="200GB"
 )
 
 check_disk_space() {
@@ -35,10 +33,10 @@ check_disk_space() {
     local available_space=$(df "$DATA_DIR" | awk 'NR==2 {print int($4/1048576)}')
 
     echo_info "Checking available disk space..."
-    echo_info "Required: ${required_space}, Available: ${available_space}GB"
+    echo_info "Required: ${required_space}GB, Available: ${available_space}GB"
 
     if [ "$available_space" -lt "$required_space" ]; then
-        echo_error "Insufficient disk space for snapshot download and extraction."
+        echo_error "Insufficient disk space for snapshot sync."
         return 1
     fi
 
@@ -46,158 +44,174 @@ check_disk_space() {
     return 0
 }
 
-download_snapshot() {
-    local url="$1"
-    local output_file="$2"
+check_existing_data() {
+    local data_dir="$1"
+    local network="$2"
 
-    echo_info "Downloading snapshot from: $url"
-    echo_warning "This may take several hours depending on your connection speed."
-    echo ""
-
-    # Check if partial download exists
-    if [ -f "$output_file" ]; then
-        local existing_size=$(stat -c%s "$output_file" 2>/dev/null || stat -f%z "$output_file" 2>/dev/null)
-        echo_info "Found partial download ($(numfmt --to=iec $existing_size)). Attempting resume..."
+    # Check for existing blockchain data
+    local target_dir="$data_dir"
+    if [[ "$network" == "testnet" ]]; then
+        target_dir="$data_dir/testnet3"
+    elif [[ "$network" == "regtest" ]]; then
+        target_dir="$data_dir/regtest"
     fi
 
-    # Download with resume support and better error handling
-    local max_retries=3
-    local retry_count=0
-
-    while [ $retry_count -lt $max_retries ]; do
-        echo_info "Download attempt $((retry_count + 1)) of $max_retries..."
-
-        if command -v wget &> /dev/null; then
-            if wget -c --timeout=30 --tries=1 --progress=bar:force -O "$output_file" "$url"; then
-                break
-            fi
-        elif command -v curl &> /dev/null; then
-            if curl -C - -L --connect-timeout 30 --max-time 0 --retry 0 -o "$output_file" "$url"; then
-                break
-            fi
-        else
-            echo_error "Neither wget nor curl is available."
-            return 1
-        fi
-
-        retry_count=$((retry_count + 1))
-        if [ $retry_count -lt $max_retries ]; then
-            echo_warning "Download failed. Retrying in 10 seconds..."
-            sleep 10
-        fi
-    done
-
-    if [ $retry_count -eq $max_retries ]; then
-        echo_error "Download failed after $max_retries attempts."
-        return 1
+    if [ -d "$target_dir/blocks" ] && [ "$(ls -A "$target_dir/blocks" 2>/dev/null | wc -l)" -gt 0 ]; then
+        echo_info "Found existing blockchain data in $target_dir"
+        echo_yellow "This will update your existing data with the latest snapshot."
+        echo_yellow "New and updated files will be downloaded."
+        echo ""
+        return 0
     fi
 
-    echo_success "Download complete."
-    return 0
+    return 1
 }
 
-verify_snapshot() {
-    local snapshot_file="$1"
-    local checksum_url="${snapshot_file%.tar.gz}.tar.gz.sha256"
-
-    echo_info "Verifying snapshot integrity..."
-
-    # Download checksum file
-    local checksum_file="${snapshot_file}.sha256"
-    if curl -s -o "$checksum_file" "$checksum_url" 2>/dev/null; then
-        if sha256sum -c "$checksum_file" 2>/dev/null; then
-            echo_success "Snapshot verified successfully."
+install_rclone() {
+    echo_warning "rclone is required for snapshot sync but is not installed."
+    echo_info "rclone can be installed automatically using the official installer:"
+    echo_info "  curl https://rclone.org/install.sh | sudo bash"
+    echo ""
+    
+    read -p "$(echo_yellow "Install rclone automatically? [y/N]: ")" response
+    response=${response:-N}
+    
+    if [[ ! "$response" =~ ^[Yy]$ ]]; then
+        echo_info "Skipping rclone installation."
+        echo_info "Please install rclone manually and run the sync again:"
+        echo_info "  curl https://rclone.org/install.sh | sudo bash"
+        return 1
+    fi
+    
+    echo_info "Installing rclone..."
+    if command -v sudo &> /dev/null; then
+        if curl -s https://rclone.org/install.sh | sudo bash; then
+            echo_success "rclone installed successfully."
             return 0
         else
-            echo_error "Snapshot verification failed!"
+            echo_error "Failed to install rclone automatically."
+            echo_info "Please install rclone manually:"
+            echo_info "  curl https://rclone.org/install.sh | sudo bash"
             return 1
         fi
     else
-        echo_warning "Could not download checksum file. Skipping verification."
-        echo_warning "This is not recommended for security reasons."
-        return 0
+        echo_error "sudo not available. Please install rclone manually:"
+        echo_info "  curl https://rclone.org/install.sh | bash"
+        return 1
     fi
 }
 
-
-extract_snapshot() {
-    local snapshot_file="$1"
-    local target_dir="$2"
-
-    echo_info "Extracting snapshot to $target_dir..."
-    echo_warning "This may take 30-60 minutes depending on disk speed."
+sync_snapshot() {
+    local network="$1"
+    local data_dir="$2"
+    local base_url="${SNAPSHOT_BASE_URL}/${network}/"
+    
+    echo_info "Syncing ${network} snapshot from: ${base_url}"
+    echo_info "Destination: ${data_dir}"
+    echo_warning "This may take several hours depending on your connection speed."
     echo ""
-
-    # For testnet, we need to extract to the testnet3 subdirectory
-    local extract_dir="$target_dir"
-    if [[ "$NETWORK" == "testnet" ]]; then
-        extract_dir="$target_dir/testnet3"
-        mkdir -p "$extract_dir"
+    
+    # Check if rclone is available, install if needed
+    if ! command -v rclone &> /dev/null; then
+        if ! install_rclone; then
+            echo_error "Cannot proceed without rclone."
+            return 1
+        fi
     fi
-
-    # Create extraction progress indicator
-    show_extraction_progress() {
-        local dir="$1"
-        while [ ! -f "${dir}/.extraction_done" ]; do
-            if [ -d "$dir" ]; then
-                local count=$(find "$dir" -type f 2>/dev/null | wc -l)
-                echo -ne "\rFiles extracted: $count"
-            fi
-            sleep 5
-        done
-        echo ""
-    }
-
-    # Start progress indicator
-    show_extraction_progress "$extract_dir" &
-    local progress_pid=$!
-
-    # Extract with progress (handles gzip automatically)
-    if ! tar -xzf "$snapshot_file" -C "$extract_dir" --checkpoint=1000 --checkpoint-action=dot; then
-        kill $progress_pid 2>/dev/null || true
-        echo_error "Failed to extract snapshot."
+    
+    # Determine if this is an update
+    if check_existing_data "$data_dir" "$network"; then
+        echo_info "Updating existing blockchain data..."
+    else
+        echo_info "Performing initial blockchain sync..."
+    fi
+    
+    echo_info "Starting rclone sync with progress display..."
+    echo_info "Source: ${base_url}"
+    echo ""
+    
+    # Use rclone sync with HTTP backend
+    # Use --http-url parameter with :http: remote
+    
+    if ! rclone sync ":http:" "${data_dir}" \
+                    --http-url "${base_url}" \
+                    --progress \
+                    --transfers 4 \
+                    --checkers 8 \
+                    --retries 3 \
+                    --low-level-retries 3 \
+                    --timeout 30s \
+                    --contimeout 10s \
+                    --filter "+ blocks/**" \
+                    --filter "+ chainstate/**" \
+                    --filter "+ frozentxos/**" \
+                    --filter "+ merkle/**" \
+                    --filter "+ testnet3/" \
+                    --filter "+ testnet3/blocks/**" \
+                    --filter "+ testnet3/chainstate/**" \
+                    --filter "+ testnet3/frozentxos/**" \
+                    --filter "+ testnet3/merkle/**" \
+                    --filter "- *"; then
+        echo_error "rclone sync failed."
         return 1
     fi
-
-    # Mark extraction as complete
-    touch "${extract_dir}/.extraction_done"
-    kill $progress_pid 2>/dev/null || true
-    wait $progress_pid 2>/dev/null || true
-
+    
     echo ""
-    echo_success "Snapshot extracted successfully."
-
-    # Clean up extraction marker
-    rm -f "${extract_dir}/.extraction_done"
-
+    echo_success "Snapshot sync completed successfully."
     return 0
 }
 
-cleanup_snapshot() {
-    local snapshot_file="$1"
+# rclone handles orphan cleanup automatically with sync command
+# No separate cleanup function needed
 
-    echo_info "Cleaning up temporary files..."
-    rm -f "$snapshot_file" "${snapshot_file}.done" "${snapshot_file}.sha256"
-    echo_success "Cleanup complete."
-}
+verify_sync() {
+    local data_dir="$1"
+    local network="$2"
 
+    echo_info "Verifying synced data..."
 
-main() {
-    echo_green "=== Blockchain Snapshot Download ==="
-    echo ""
-
-    # Check if snapshot URL exists for network
-    if [[ ! "${SNAPSHOT_URLS[$NETWORK]}" ]]; then
-        echo_warning "No snapshot available for network: $NETWORK"
-        echo_info "The node will sync from the genesis block."
+    # Check for essential directories
+    local target_dir="$data_dir"
+    if [[ "$network" == "testnet" ]]; then
+        target_dir="$data_dir/testnet3"
+    elif [[ "$network" == "regtest" ]]; then
+        echo_info "Regtest doesn't use snapshots."
         return 0
     fi
 
-    local snapshot_url="${SNAPSHOT_URLS[$NETWORK]}"
-    local snapshot_size="${SNAPSHOT_SIZES[$NETWORK]}"
-    local downloads_dir="$(dirname "$SCRIPT_DIR")/downloads"
-    mkdir -p "$downloads_dir"
-    local snapshot_file="${downloads_dir}/${NETWORK}-snapshot.tar.gz"
+    local required_dirs=("blocks" "chainstate")
+    local missing_dirs=()
+
+    for dir in "${required_dirs[@]}"; do
+        if [ ! -d "$target_dir/$dir" ] || [ -z "$(ls -A "$target_dir/$dir" 2>/dev/null)" ]; then
+            missing_dirs+=("$dir")
+        fi
+    done
+
+    if [ ${#missing_dirs[@]} -gt 0 ]; then
+        echo_error "Missing or empty directories: ${missing_dirs[*]}"
+        echo_error "Snapshot sync may have been incomplete."
+        return 1
+    fi
+
+    echo_success "Verification passed. Essential directories are present."
+    return 0
+}
+
+main() {
+    echo_green "=== Blockchain Snapshot Sync ==="
+    echo ""
+
+    # Check if network supports snapshots
+    if [[ "$NETWORK" == "regtest" ]]; then
+        echo_info "Regtest network doesn't use snapshots."
+        echo_info "The node will generate blocks locally."
+        return 0
+    fi
+
+    # Check if snapshot is available for the network
+    local snapshot_url="${SNAPSHOT_BASE_URL}/${NETWORK}/"
+    local snapshot_size="${SNAPSHOT_SIZES[$NETWORK]:-Unknown}"
 
     echo_info "Network: $NETWORK"
     echo_info "Estimated snapshot size: $snapshot_size"
@@ -205,91 +219,54 @@ main() {
     echo ""
 
     # Ask for confirmation
-    echo_yellow "Download and extract blockchain snapshot?"
-    echo_yellow "This will speed up initial sync significantly."
+    echo_yellow "Sync blockchain snapshot from the server?"
+    echo_yellow "This will download blockchain data to speed up initial sync."
     read -p "$(echo_yellow "Continue? [Y/n]: ")" response
     response=${response:-Y}
 
     if [[ ! "$response" =~ ^[Yy]$ ]]; then
-        echo_info "Skipping snapshot download."
+        echo_info "Skipping snapshot sync."
         echo_info "The node will sync from the genesis block."
         return 0
     fi
 
-    # Check disk space (download + extraction requires 2x space)
-    local required_space=350  # GB for mainnet (160GB snapshot + 160GB extracted + buffer)
-    [[ "$NETWORK" == "testnet" ]] && required_space=50  # 20GB snapshot + 30GB extracted
+    # Check disk space
+    local required_space=200  # GB for mainnet
+    [[ "$NETWORK" == "testnet" ]] && required_space=250  # GB for testnet (full node)
 
-    echo_info "Snapshot will be downloaded and then extracted."
-    echo_info "This requires temporary space for both the download and extracted data."
+    echo_info "Checking disk space requirements..."
 
     if ! check_disk_space "$required_space"; then
         echo_error "Insufficient disk space for snapshot."
         return 1
     fi
 
-    # Ensure downloads directory exists
-    mkdir -p "$downloads_dir"
-
-    # Check if snapshot file already exists
-    local skip_download=false
-    if [ -f "$snapshot_file" ]; then
-        local file_size=$(stat -c%s "$snapshot_file" 2>/dev/null || stat -f%z "$snapshot_file" 2>/dev/null)
-        local file_size_gb=$((file_size / 1024 / 1024 / 1024))
-
-        echo_info "Found existing snapshot file: $(basename "$snapshot_file")"
-        echo_info "Size: ${file_size_gb}GB"
-        echo ""
-
-        echo_yellow "Use existing snapshot file instead of downloading?"
-        echo_yellow "Choose 'n' to re-download if the file might be incomplete or corrupted."
-        read -p "$(echo_yellow "Use existing file? [Y/n]: ")" response
-        response=${response:-Y}
-
-        if [[ "$response" =~ ^[Yy]$ ]]; then
-            skip_download=true
-            echo_info "Using existing snapshot file."
-        else
-            echo_info "Will re-download snapshot file."
-            rm -f "$snapshot_file" "${snapshot_file}.sha256"
-        fi
-        echo ""
-    fi
-
-    # Download snapshot if needed
-    if [ "$skip_download" != true ]; then
-        echo ""
-        if ! download_snapshot "$snapshot_url" "$snapshot_file"; then
-            echo_error "Failed to download snapshot."
-            echo_info "The node will sync from the genesis block instead."
-            return 0
-        fi
-    fi
-
-    # Verify snapshot if downloaded
+    # Sync the snapshot
     echo ""
-    verify_snapshot "$snapshot_file"
-
-    # Extract snapshot
-    echo ""
-    if ! extract_snapshot "$snapshot_file" "$DATA_DIR"; then
-        echo_error "Failed to extract snapshot."
-        cleanup_snapshot "$snapshot_file"
-        return 1
+    if ! sync_snapshot "$NETWORK" "$DATA_DIR"; then
+        echo_error "Failed to sync snapshot."
+        echo_info "The node will sync from the genesis block instead."
+        return 0
     fi
 
-    # Clean up downloaded file
-    cleanup_snapshot "$snapshot_file"
+    # Verify the synced data
+    echo ""
+    if ! verify_sync "$DATA_DIR" "$NETWORK"; then
+        echo_warning "Verification failed, but you can try starting the node anyway."
+        echo_warning "The node will re-download any missing or corrupted files."
+    fi
 
     # Set proper permissions
     echo_info "Setting permissions..."
     chmod -R 755 "$DATA_DIR" 2>/dev/null || true
 
     echo ""
-    echo_green "=== Snapshot Setup Complete ==="
-    echo_info "The blockchain data has been extracted to: $DATA_DIR"
+    echo_green "=== Snapshot Sync Complete ==="
+    echo_info "The blockchain data has been synced to: $DATA_DIR"
     echo_info "When you start the node, it will validate the data and continue syncing."
-    echo_warning "Initial validation may take 1-2 hours."
+    echo_warning "Initial validation may take 30-60 minutes."
+    echo_info "The node automatically verifies blockchain integrity on startup."
+    echo_info "For additional verification, you can run: ./b.sh verifychain"
     echo ""
 
     return 0

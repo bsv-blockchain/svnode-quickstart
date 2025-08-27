@@ -5,7 +5,7 @@ echo "Updating package lists..."
 apt-get update > /dev/null 2>&1
 
 echo "Installing required packages..."
-apt-get install -y wget curl tar openssl sudo iputils-ping pigz pv > /dev/null 2>&1
+apt-get install -y curl tar openssl sudo iputils-ping pigz pv unzip > /dev/null 2>&1
 
 echo "All packages installed successfully - container ready!"
 

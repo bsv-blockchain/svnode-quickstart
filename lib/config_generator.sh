@@ -227,7 +227,7 @@ create_config_file() {
     echo_info "Generating configuration for: $NETWORK ($NODE_TYPE node)"
 
     # Create data directory if it doesn't exist
-    if ! sudo mkdir -p "$DATA_DIR"; then
+    if ! mkdir -p "$DATA_DIR"; then
         echo_error "Failed to create data directory: $DATA_DIR"
         return 1
     fi
@@ -251,11 +251,11 @@ create_config_file() {
     esac
 
     # Write configuration file
-    echo "$config_content" | sudo tee "$config_file" > /dev/null
+    echo "$config_content" > "$config_file"
 
     if [ $? -eq 0 ]; then
         # Set proper permissions
-        sudo chmod 600 "$config_file"
+        chmod 600 "$config_file"
         echo_success "Configuration file created: $config_file"
 
         # Display important settings

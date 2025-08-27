@@ -8,7 +8,7 @@ A comprehensive setup script and template collection for quickly deploying SV No
 - **Multiple Network Support**: Mainnet, Testnet, and Regtest
 - **Flexible Node Types**: Choose between pruned (minimal disk usage) or full node
 - **Simple Deployment**: Direct binary execution with daemon mode and helper scripts
-- **Blockchain Snapshots**: Optional pruned snapshot download for faster initial sync
+- **Blockchain Snapshots**: HTTP-based incremental sync using wget for faster initial setup
 - **System Requirements Check**: Validates prerequisites before installation
 - **Automatic Configuration**: Generates optimized `bitcoin.conf` based on your choices
 - **Management Scripts**: Convenient scripts for starting, stopping, and monitoring your node
@@ -89,15 +89,31 @@ svnode-quickstart/
 
 ### Node Types
 
-- **Pruned Node**: Reduces disk usage by deleting old block data (recommended for most users)
+- **Pruned Node**: Reduces disk usage by removing old spent transaction data (recommended for most users)
   - Disk requirement: ~200GB
-  - Cannot serve old blocks to other nodes
-  - Suitable for applications and services
+  - Retains all unspent transaction outputs (UTXOs) - critical for validation
+  - Only removes historical spent transaction data from old blocks
+  - Cannot serve complete historical blocks to other nodes
+  - Suitable for applications, services, and wallet operations
 
 - **Full Node**: Maintains complete blockchain history
   - Disk requirement: ~15TB and growing
   - Can serve the entire blockchain to other nodes
   - Required for block explorers and archival purposes
+
+### Sync Methods
+
+- **Snapshot Sync**: Downloads pruned blockchain data via HTTP using wget (recommended)
+  - Source: https://svnode-snapshots.bsvb.tech/ (provided as-is by the BSV Association)
+  - Both mainnet and testnet snapshots are pruned (contain recent blockchain data only)
+  - Incremental updates: Only downloads new files on subsequent syncs
+  - Resume support: Continues from where it left off if interrupted
+  - Mainnet: ~160GB of pruned blockchain data
+  - Testnet: ~200GB of pruned blockchain data
+  
+  **Note on Pruned Snapshots**: Pruned snapshots contain all unspent transaction outputs (UTXOs) but have removed historical spent transaction data from old blocks. This preserves your node's ability to validate new transactions and blocks while significantly reducing storage requirements. All consensus-critical data remains intact - only historical spent transactions that are no longer needed for validation are removed. Your node maintains full security and validation capabilities.
+  
+- **Genesis Sync**: Start from block 0 and sync the entire blockchain (slower but builds complete history)
 
 ### Simple Management
 
@@ -351,80 +367,13 @@ For SV Node-specific support:
 - [SV Node Documentation](https://docs.bsvblockchain.org/network-topology/nodes/sv-node)
 - [SV Node GitHub](https://github.com/bitcoin-sv/bitcoin-sv)
 
-## Creating Snapshots
-
-If you want to create your own blockchain snapshots for distribution:
-
-### Prerequisites
-- A fully synced pruned SV Node
-- Sufficient disk space for tar compression (approximately same size as data directory)
-- Shell access to the server running the node
-
-### Snapshot Creation Process
-
-1. **Gracefully stop the SV Node**:
-```bash
-# Using these helper scripts
-./stop.sh
-
-# Or manually with bitcoin-cli
-./bsv/bin/bitcoin-cli -conf=./bsv-data/bitcoin.conf stop
-
-# Wait for complete shutdown (check that no bitcoind process exists)
-ps aux | grep bitcoind
-```
-
-2. **Create the snapshot archive**:
-```bash
-# Navigate to the data directory
-cd ./bsv-data
-
-# Create compressed archive of essential blockchain data using pigz for parallel compression
-# Install required tools first: apt-get install pigz pv (or yum install pigz pv)
-
-# Using pigz -1 for fastest compression (less CPU, larger file)
-# pigz compression levels: -1 (fastest) to -9 (best compression)
-# Default is -6, use -1 for speed when bandwidth isn't a constraint
-tar -cf - blocks chainstate frozentxos merkle | pv | pigz -1 > ../mainnet-snapshot-latest.tar.gz
-
-# For testnet, navigate to testnet3 subdirectory first
-cd testnet3
-tar -cf - blocks chainstate frozentxos merkle | pv | pigz -1 > ../../testnet-snapshot-latest.tar.gz
-```
-
-3. **Verify the archive**:
-```bash
-# Check archive contents
-tar -tzf mainnet-snapshot-latest.tar.gz | head -20
-
-# Check archive size
-ls -lh mainnet-snapshot-latest.tar.gz
-```
-
-4. **Generate checksums** (recommended):
-```bash
-# Generate simple checksum file
-sha256sum mainnet-snapshot-latest.tar.gz > mainnet-snapshot-latest.tar.gz.sha256
-
-# For testnet
-sha256sum testnet-snapshot-latest.tar.gz > testnet-snapshot-latest.tar.gz.sha256
-```
-
-### Important Notes
-- **Only include these directories**: `blocks/`, `chainstate/`, `frozentxos/`, `merkle/`
-- **Exclude**: `bitcoin.conf`, `bitcoind.log`, `peers.dat`, `banlist.dat`, and other config/log files
-- **Node must be stopped**: Never create snapshots while the node is running
-- **Pruned nodes only**: Full node snapshots would be prohibitively large
-- **Verify integrity**: Test extraction on a separate system before distribution
-
-### Checksum File Format
-The `.sha256` files should contain a single line with the checksum and filename:
-```
-a1b2c3d4e5f6...  mainnet-snapshot-latest.tar.gz
-```
-
-The resulting archive contains only the essential blockchain data needed for a quick node startup, without any configuration or personal files.
 
 ## Disclaimer
 
 This setup script is provided as-is without warranty. Always verify configurations and test thoroughly before using in production environments. Ensure you understand the implications of running a blockchain node, including disk space, bandwidth, and security considerations.
+
+### Snapshot Trust
+
+The blockchain snapshots available at https://svnode-snapshots.bsvb.tech/ are provided as-is by the BSV Association. While these snapshots can significantly speed up initial node setup, it's up to each user to decide whether to trust these pre-synced snapshots or perform a full sync from the genesis block. Syncing from genesis takes longer but ensures you independently validate the entire blockchain history instead of only the new blocks and transactions coming in after the snapshot date.
+
+When using snapshots, SV Node will automatically validate the loaded blockchain data on startup, verifying block headers, chain integrity, and the UTXO set. You can also run `./b.sh verifychain` for additional verification.
