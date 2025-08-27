@@ -311,21 +311,17 @@ ps aux | grep bitcoind
 # Navigate to the data directory
 cd ./bsv-data
 
-# Create compressed archive of essential blockchain data
-tar -czf ../mainnet-snapshot-latest.tar.gz \
-    blocks/ \
-    chainstate/ \
-    database/ \
-    frozentxos/ \
-    merkle/
+# Create compressed archive of essential blockchain data using pigz for parallel compression
+# Install required tools first: apt-get install pigz pv (or yum install pigz pv)
 
-# For testnet, use appropriate filename
-tar -czf ../testnet-snapshot-latest.tar.gz \
-    blocks/ \
-    chainstate/ \
-    database/ \
-    frozentxos/ \
-    merkle/
+# Using pigz -1 for fastest compression (less CPU, larger file)
+# pigz compression levels: -1 (fastest) to -9 (best compression)
+# Default is -6, use -1 for speed when bandwidth isn't a constraint
+tar -cf - blocks chainstate database frozentxos merkle | pv | pigz -1 > ../mainnet-snapshot-latest.tar.gz
+
+# For testnet, navigate to testnet3 subdirectory first
+cd testnet3
+tar -cf - blocks chainstate database frozentxos merkle | pv | pigz -1 > ../../testnet-snapshot-latest.tar.gz
 ```
 
 3. **Verify the archive**:

@@ -87,7 +87,7 @@ download_snapshot() {
 
 verify_snapshot() {
     local snapshot_file="$1"
-    local checksum_url="${snapshot_file%.tar.gz}.sha256"
+    local checksum_url="${snapshot_file%.tar.gz}.tar.gz.sha256"
     
     echo_info "Verifying snapshot integrity..."
     
@@ -117,6 +117,13 @@ extract_snapshot() {
     echo_warning "This may take 30-60 minutes depending on disk speed."
     echo ""
     
+    # For testnet, we need to extract to the testnet3 subdirectory
+    local extract_dir="$target_dir"
+    if [[ "$NETWORK" == "testnet" ]]; then
+        extract_dir="$target_dir/testnet3"
+        mkdir -p "$extract_dir"
+    fi
+    
     # Create extraction progress indicator
     show_extraction_progress() {
         local dir="$1"
@@ -131,18 +138,18 @@ extract_snapshot() {
     }
     
     # Start progress indicator
-    show_extraction_progress "$target_dir" &
+    show_extraction_progress "$extract_dir" &
     local progress_pid=$!
     
-    # Extract with progress
-    if ! tar -xzf "$snapshot_file" -C "$target_dir" --checkpoint=1000 --checkpoint-action=dot; then
+    # Extract with progress (handles gzip automatically)
+    if ! tar -xzf "$snapshot_file" -C "$extract_dir" --checkpoint=1000 --checkpoint-action=dot; then
         kill $progress_pid 2>/dev/null || true
         echo_error "Failed to extract snapshot."
         return 1
     fi
     
     # Mark extraction as complete
-    touch "${target_dir}/.extraction_done"
+    touch "${extract_dir}/.extraction_done"
     kill $progress_pid 2>/dev/null || true
     wait $progress_pid 2>/dev/null || true
     
@@ -150,7 +157,7 @@ extract_snapshot() {
     echo_success "Snapshot extracted successfully."
     
     # Clean up extraction marker
-    rm -f "${target_dir}/.extraction_done"
+    rm -f "${extract_dir}/.extraction_done"
     
     return 0
 }
