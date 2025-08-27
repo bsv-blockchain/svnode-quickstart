@@ -1,6 +1,6 @@
-# SVNode Quick Setup
+# SV Node Quick Setup
 
-A comprehensive setup script and template collection for quickly deploying Bitcoin SV (BSV) nodes with interactive configuration, automatic installation, and flexible deployment options.
+A comprehensive setup script and template collection for quickly deploying SV Node on the BSV Blockchain with interactive configuration, automatic installation, and flexible deployment options.
 
 ## Features
 
@@ -45,22 +45,35 @@ chmod +x setup.sh
    - Choose sync method (snapshot/genesis)
    - Configure RPC credentials
 
+5. Start your node:
+```bash
+./start.sh
+```
+
+6. Check status:
+```bash
+./b.sh getblockchaininfo
+```
+
 ## Directory Structure
 
 ```
 svnode-quickstart/
 ├── setup.sh                    # Main interactive setup script
-├── start.sh                    # Start the SVNode
-├── stop.sh                     # Stop the SVNode gracefully
-├── restart.sh                  # Restart the SVNode
+├── start.sh                    # Start the SV Node
+├── stop.sh                     # Stop the SV Node gracefully
+├── restart.sh                  # Restart the SV Node
+├── clean.sh                    # Clean up SV Node files
 ├── b.sh                        # Bitcoin CLI wrapper
+├── docker-compose.yml          # Docker testing environment
+├── docker-entrypoint.sh        # Docker container setup script
 ├── lib/
 │   ├── check_requirements.sh   # System requirements validation
-│   ├── download_node.sh        # Download and verify SVNode binaries
+│   ├── download_node.sh        # Download and verify SV Node binaries
 │   ├── config_generator.sh     # Generate bitcoin.conf
 │   ├── snapshot_sync.sh        # Handle pruned snapshot downloads
 │   └── colors.sh               # Terminal color formatting
-├── bsv/                        # SVNode installation (created by setup)
+├── bsv/                        # SV Node installation (created by setup)
 ├── bsv-data/                   # Node data directory (created by setup)
 ├── downloads/                  # Download cache (created by setup)
 └── README.md                   # This file
@@ -70,7 +83,7 @@ svnode-quickstart/
 
 ### Networks
 
-- **Mainnet**: Production Bitcoin SV network
+- **Mainnet**: Production BSV Blockchain network
 - **Testnet**: Test network for development
 - **Regtest**: Local regression testing network
 
@@ -98,7 +111,7 @@ The setup creates a straightforward deployment using the bitcoind daemon mode wi
 
 ### Node Management
 
-Simple commands to manage your SVNode:
+Simple commands to manage your SV Node:
 
 ```bash
 # Start the node
@@ -128,8 +141,9 @@ tail -f ./bsv-data/regtest/bitcoind.log
 
 Default installation paths (in the script directory):
 
-- **Installation Directory**: `./bsv`
-- **Data Directory**: `./bsv-data`
+- **Installation Directory**: `./bsv/`
+- **Data Directory**: `./bsv-data/`
+- **Downloads Directory**: `./downloads/` (temporary files, snapshots)
 - **Configuration File**: `./bsv-data/bitcoin.conf`
 - **Log Files**:
   - **Mainnet**: `./bsv-data/bitcoind.log`
@@ -260,9 +274,54 @@ tar -xzf svnode_backup.tar.gz
 ./start.sh
 ```
 
+## Cleanup
+
+To remove all SV Node files and start fresh:
+
+```bash
+# Remove all files (interactive)
+./clean.sh
+
+# Remove only blockchain data
+./clean.sh --data-only
+
+# Remove everything silently
+./clean.sh --force --quiet
+
+# See all cleanup options
+./clean.sh --help
+```
+
+## Docker Testing Environment
+
+A Docker Compose setup is provided for testing the installation scripts in a clean Ubuntu 24.04 x86_64 environment:
+
+```bash
+# Start the test container
+docker-compose up -d
+
+# Access the container shell  
+docker-compose exec svnode-test bash
+
+# Inside the container, run the setup
+cd /workspace
+./setup.sh
+
+# Test the installation
+./start.sh
+./b.sh getblockchaininfo
+./stop.sh
+
+# Clean up when done
+exit
+docker-compose down
+```
+
+The Docker environment includes all required dependencies and provides an isolated testing environment that won't affect your host system. The container automatically installs necessary packages during startup.
+
 ## Updates
 
-To update your SVNode to a newer version:
+To update your SV Node to a newer version:
 
 1. Stop the current node
 2. Download the new version using `lib/download_node.sh`
@@ -287,22 +346,23 @@ For issues with this setup script:
 - Open an issue on GitHub
 - Check existing issues for solutions
 
-For SVNode-specific support:
-- [Bitcoin SV Documentation](https://docs.bitcoinsv.io/)
-- [Bitcoin SV Node GitHub](https://github.com/bitcoin-sv/bitcoin-sv)
+For SV Node-specific support:
+- [BSV Blockchain Documentation](https://docs.bsvblockchain.org/)
+- [SV Node Documentation](https://docs.bsvblockchain.org/network-topology/nodes/sv-node)
+- [SV Node GitHub](https://github.com/bitcoin-sv/bitcoin-sv)
 
 ## Creating Snapshots
 
 If you want to create your own blockchain snapshots for distribution:
 
 ### Prerequisites
-- A fully synced pruned SVNode
+- A fully synced pruned SV Node
 - Sufficient disk space for tar compression (approximately same size as data directory)
 - Shell access to the server running the node
 
 ### Snapshot Creation Process
 
-1. **Gracefully stop the SVNode**:
+1. **Gracefully stop the SV Node**:
 ```bash
 # Using these helper scripts
 ./stop.sh
