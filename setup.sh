@@ -33,90 +33,178 @@ prompt_yes_no() {
     local prompt="$1"
     local default="${2:-n}"
     local response
-    
+
     if [[ "$default" == "y" ]]; then
         prompt="$prompt [Y/n]: "
     else
         prompt="$prompt [y/N]: "
     fi
-    
+
     read -p "$(echo_yellow "$prompt")" response
     response=${response:-$default}
-    
+
     [[ "$response" =~ ^[Yy]$ ]]
 }
 
-prompt_choice() {
+menu_select() {
     local prompt="$1"
     shift
     local options=("$@")
-    local choice
-    
-    echo_yellow "$prompt"
-    for i in "${!options[@]}"; do
-        echo "  $((i+1)). ${options[$i]}"
-    done
-    
+    local selected=0
+    local key
+
+    # Hide cursor
+    tput civis
+
     while true; do
-        read -p "$(echo_yellow "Enter choice [1-${#options[@]}]: ")" choice
-        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#options[@]}" ]; then
-            return $((choice-1))
-        fi
-        echo_red "Invalid choice. Please try again."
+        # Clear screen and show menu
+        clear
+        echo_blue "=================================================="
+        echo_blue "           SVNode Quick Setup Script              "
+        echo_blue "=================================================="
+        echo ""
+        echo_yellow "$prompt"
+        echo ""
+
+        # Display options with selection indicator
+        for i in "${!options[@]}"; do
+            if [ $i -eq $selected ]; then
+                echo_green "  → ${options[$i]}"
+            else
+                echo "    ${options[$i]}"
+            fi
+        done
+
+        echo ""
+        echo_yellow "Use ↑/↓ arrow keys to navigate, Enter to select"
+
+        # Read single character
+        read -rsn1 key
+
+        case "$key" in
+            $'\x1b')  # Escape sequence
+                read -rsn2 key
+                case "$key" in
+                    '[A')  # Up arrow
+                        if [ $selected -gt 0 ]; then
+                            selected=$((selected - 1))
+                        fi
+                        ;;
+                    '[B')  # Down arrow
+                        if [ $selected -lt $((${#options[@]} - 1)) ]; then
+                            selected=$((selected + 1))
+                        fi
+                        ;;
+                esac
+                ;;
+            '')  # Enter key
+                break
+                ;;
+            'q'|'Q')  # Quit
+                echo ""
+                echo_red "Setup cancelled."
+                tput cnorm  # Show cursor
+                exit 1
+                ;;
+        esac
     done
+
+    # Show cursor again
+    tput cnorm
+
+    # Clear screen one more time and show selection
+    clear
+    echo_blue "=================================================="
+    echo_blue "           SVNode Quick Setup Script              "
+    echo_blue "=================================================="
+    echo ""
+
+    # Return the selected index (don't re-enable set -e here as it will exit on non-zero return)
+    return $selected
 }
 
 collect_user_preferences() {
     echo_green "=== Configuration Setup ==="
     echo ""
-    
+
     # Network selection
-    prompt_choice "Select network:" "Mainnet" "Testnet" "Regtest"
-    case $? in
+    set +e
+    menu_select "Select network:" "Mainnet" "Testnet" "Regtest"
+    local network_choice=$?
+    set -e
+    case $network_choice in
         0) NETWORK="mainnet" ;;
         1) NETWORK="testnet" ;;
         2) NETWORK="regtest" ;;
     esac
     echo_info "Network: $NETWORK"
     echo ""
-    
-    # Node type selection
-    prompt_choice "Select node type:" "Pruned (minimal disk space)" "Full (complete blockchain)"
-    case $? in
-        0) NODE_TYPE="pruned" ;;
-        1) NODE_TYPE="full" ;;
-    esac
-    echo_info "Node type: $NODE_TYPE"
-    echo ""
-    
-    # Sync method selection (not for regtest)
+
+    # Sync method selection first (not for regtest)
     if [[ "$NETWORK" != "regtest" ]]; then
-        if [[ "$NODE_TYPE" == "pruned" ]]; then
-            prompt_choice "Select sync method:" "Download snapshot (faster)" "Sync from genesis block (slower)"
-            case $? in
-                0) SYNC_METHOD="snapshot" ;;
-                1) SYNC_METHOD="genesis" ;;
-            esac
-        else
-            SYNC_METHOD="genesis"
-            echo_info "Full nodes must sync from genesis block"
-        fi
+        set +e
+        menu_select "Select sync method:" "Download snapshot (faster)" "Sync from genesis block (slower)"
+        local sync_choice=$?
+        set -e
+        case $sync_choice in
+            0)
+                SYNC_METHOD="snapshot"
+                # Auto-select node type based on network and snapshot choice
+                if [[ "$NETWORK" == "mainnet" ]]; then
+                    NODE_TYPE="pruned"
+                    echo_info "Mainnet snapshot selected - using pruned mode (200GB)"
+                else  # testnet
+                    NODE_TYPE="full"
+                    echo_info "Testnet snapshot selected - using full mode (300GB)"
+                fi
+                ;;
+            1)
+                SYNC_METHOD="genesis"
+                # For genesis sync, allow user to choose node type
+                if [[ "$NETWORK" == "mainnet" ]]; then
+                    set +e
+                    menu_select "Select node type:" "Pruned (minimal disk space ~200GB)" "Full (complete blockchain ~15TB)"
+                    local node_choice=$?
+                    set -e
+                    case $node_choice in
+                        0) NODE_TYPE="pruned" ;;
+                        1) NODE_TYPE="full" ;;
+                    esac
+                else  # testnet
+                    set +e
+                    menu_select "Select node type:" "Pruned (minimal disk space ~200GB)" "Full (complete blockchain ~300GB)"
+                    local node_choice=$?
+                    set -e
+                    case $node_choice in
+                        0) NODE_TYPE="pruned" ;;
+                        1) NODE_TYPE="full" ;;
+                    esac
+                fi
+                ;;
+        esac
         echo_info "Sync method: $SYNC_METHOD"
+        echo_info "Node type: $NODE_TYPE"
+        echo ""
+    else
+        # Regtest is always full
+        NODE_TYPE="full"
+        SYNC_METHOD="genesis"
+        echo_info "Regtest mode - using full node configuration"
         echo ""
     fi
-    
-    
+
+
     # Use default directories (relative to script location)
     INSTALL_DIR="$DEFAULT_INSTALL_DIR"
     DATA_DIR="$DEFAULT_DATA_DIR"
     echo_info "Installation directory: $INSTALL_DIR"
     echo_info "Data directory: $DATA_DIR"
     echo ""
-    
+
     # RPC credentials
     if prompt_yes_no "Generate random RPC credentials?" "y"; then
         RPC_USER="bsv_rpc_$(openssl rand -hex 4)"
-        RPC_PASSWORD="$(openssl rand -base64 32)"
+        RPC_PASSWORD="bsv_pass_$(openssl rand -hex 16)"
         echo_info "Generated RPC username: $RPC_USER"
         echo_info "Generated RPC password: $RPC_PASSWORD"
         echo_warning "Please save these credentials securely!"
@@ -137,7 +225,7 @@ confirm_settings() {
     echo "Data directory:      $DATA_DIR"
     echo "RPC username:        $RPC_USER"
     echo ""
-    
+
     if ! prompt_yes_no "Proceed with installation?" "y"; then
         echo_red "Installation cancelled."
         exit 1
@@ -146,7 +234,7 @@ confirm_settings() {
 
 main() {
     print_banner
-    
+
     # Check if running as root (warn but don't prevent)
     if [[ $EUID -eq 0 ]]; then
         echo_warning "Running as root. It's recommended to run as a regular user with sudo access."
@@ -154,35 +242,33 @@ main() {
             exit 1
         fi
     fi
-    
-    # Check system requirements
-    echo_info "Checking system requirements..."
-    if ! bash "${LIB_DIR}/check_requirements.sh" "$NODE_TYPE"; then
-        echo_red "System requirements check failed."
-        exit 1
-    fi
-    echo_green "System requirements met."
-    echo ""
-    
-    # Collect user preferences
+
+    # Collect user preferences first (to determine node type)
     collect_user_preferences
-    
+
+    # Check system requirements after we know the node type
+    echo_info "Checking system requirements..."
+    if ! bash "${LIB_DIR}/check_requirements.sh" "$NODE_TYPE" "$NETWORK"; then
+        echo_red "System requirements check failed."
+        if ! prompt_yes_no "Continue anyway?" "n"; then
+            exit 1
+        fi
+    fi
+    echo_green "System requirements check complete."
+    echo ""
+
     # Confirm settings
     confirm_settings
-    
+
     # Create directories
     echo_info "Creating directories..."
     mkdir -p "$INSTALL_DIR"
     mkdir -p "$DATA_DIR"
-    
+
     # Download and install SVNode
     echo_info "Downloading SVNode v${BSV_VERSION}..."
     bash "${LIB_DIR}/download_node.sh" "$BSV_VERSION" "$INSTALL_DIR"
-    
-    # Create data directory symlink for convenience
-    echo_info "Creating data directory symlink..."
-    ln -sfn "$DATA_DIR" "./bsv-data"
-    
+
     # Generate configuration
     echo_info "Generating bitcoin.conf..."
     bash "${LIB_DIR}/config_generator.sh" \
@@ -191,17 +277,17 @@ main() {
         "$DATA_DIR" \
         "$RPC_USER" \
         "$RPC_PASSWORD"
-    
+
     # Download snapshot if requested
     if [[ "$SYNC_METHOD" == "snapshot" ]]; then
         echo_info "Downloading blockchain snapshot..."
         bash "${LIB_DIR}/snapshot_sync.sh" "$NETWORK" "$DATA_DIR"
     fi
-    
+
     # Make helper scripts executable
     echo_info "Setting up helper scripts..."
     chmod +x "${SCRIPT_DIR}"/*.sh
-    
+
     echo ""
     echo_green "=== Installation Complete ==="
     echo ""
@@ -210,7 +296,16 @@ main() {
     echo "  Stop SVNode:     ./stop.sh"
     echo "  Restart SVNode:  ./restart.sh"
     echo "  Use CLI:         ./b.sh <command>"
-    echo "  View logs:       tail -f ${DATA_DIR}/debug.log"
+    # Show network-specific log path
+    local log_path
+    if [[ "$NETWORK" == "testnet" ]]; then
+        log_path="${DATA_DIR}/testnet3/bitcoind.log"
+    elif [[ "$NETWORK" == "regtest" ]]; then
+        log_path="${DATA_DIR}/regtest/bitcoind.log"
+    else
+        log_path="${DATA_DIR}/bitcoind.log"
+    fi
+    echo "  View logs:       tail -f ${log_path}"
     echo ""
     echo "Examples:"
     echo "  ./b.sh getblockchaininfo"

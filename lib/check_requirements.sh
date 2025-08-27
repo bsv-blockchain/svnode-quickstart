@@ -5,7 +5,19 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/colors.sh"
 
-NODE_TYPE="${1:-pruned}"
+NODE_TYPE="$1"
+NETWORK="$2"
+
+# Check required parameters
+if [ -z "$NODE_TYPE" ] || [ -z "$NETWORK" ]; then
+    echo_error "Missing required parameters"
+    echo_info "Usage: $0 <node_type> <network>"
+    echo_info "  node_type: pruned or full"
+    echo_info "  network: mainnet, testnet, or regtest"
+    echo_info ""
+    echo_info "Example: $0 pruned mainnet"
+    exit 1
+fi
 
 # Minimum disk space requirements (in GB)
 PRUNED_MIN_SPACE=200   # 200GB (160GB snapshot + buffer for growth)
@@ -54,10 +66,13 @@ check_disk_space() {
         echo_info "Pruned node selected. Checking for ${required_space}GB available space..."
     fi
     
-    # Override for testnet - much smaller requirements
-    if [[ "${NETWORK:-mainnet}" == "testnet" ]]; then
-        required_space=30
-        echo_info "Testnet detected. Reduced requirement to ${required_space}GB."
+    # Override for specific networks
+    if [[ "$NETWORK" == "testnet" ]]; then
+        required_space=300
+        echo_info "Testnet detected. Requirement set to ${required_space}GB (full chain, not pruned)."
+    elif [[ "$NETWORK" == "regtest" ]]; then
+        required_space=10
+        echo_info "Regtest detected. Minimal requirement of ${required_space}GB."
     fi
     
     # Get available disk space in GB for root partition
@@ -162,8 +177,8 @@ check_dependencies() {
 check_network() {
     echo_info "Checking network connectivity..."
     
-    # Test connectivity to BSV download servers
-    if curl -s --head --connect-timeout 5 https://download.bitcoinsv.io > /dev/null; then
+    # Test connectivity to BSV download servers using actual URL structure
+    if curl -s --head --connect-timeout 5 https://releases-svnode.bsvblockchain.org > /dev/null 2>&1; then
         echo_success "Can reach Bitcoin SV download server."
     else
         echo_warning "Cannot reach Bitcoin SV download server."
@@ -204,14 +219,37 @@ check_memory() {
     echo_info "Checking system memory..."
     
     local total_mem=$(free -g | awk 'NR==2 {print $2}')
+    local available_mem=$(free -g | awk 'NR==2 {print $7}')
     echo_info "Total RAM: ${total_mem}GB"
+    echo_info "Available RAM: ${available_mem}GB"
     
-    if [ "$total_mem" -lt 8 ]; then
-        echo_warning "Less than 8GB RAM detected."
-        echo_warning "Minimum 8GB RAM recommended for optimal performance."
-        echo_warning "The node may run slowly or encounter issues with less memory."
+    # Set memory requirements based on network
+    local required_mem
+    if [[ "$NETWORK" == "mainnet" ]]; then
+        required_mem=100
+        echo_info "Mainnet selected. Recommended free memory: ${required_mem}GB"
+    elif [[ "$NETWORK" == "testnet" ]]; then
+        required_mem=12
+        echo_info "Testnet selected. Recommended free memory: ${required_mem}GB"
+    elif [[ "$NETWORK" == "regtest" ]]; then
+        required_mem=1
+        echo_info "Regtest selected. Recommended free memory: ${required_mem}GB"
     else
-        echo_success "Sufficient RAM available."
+        echo_error "Unknown network: $NETWORK"
+        return 1
+    fi
+    
+    if [ "$available_mem" -lt "$required_mem" ]; then
+        echo_warning "Available memory (${available_mem}GB) is less than recommended (${required_mem}GB)."
+        echo_warning "The node may run slowly or encounter performance issues."
+        
+        if [[ "$NETWORK" == "mainnet" ]]; then
+            echo_warning "For mainnet, consider upgrading to at least 128GB RAM for optimal performance."
+        elif [[ "$NETWORK" == "testnet" ]]; then
+            echo_warning "For testnet, at least 16GB RAM is recommended for good performance."
+        fi
+    else
+        echo_success "Sufficient memory available for $NETWORK."
     fi
     
     return 0

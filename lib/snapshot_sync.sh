@@ -5,8 +5,19 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/colors.sh"
 
-NETWORK="${1:-mainnet}"
-DATA_DIR="${2:-/var/lib/bsv-data}"
+NETWORK="$1"
+DATA_DIR="$2"
+
+# Check required parameters
+if [ -z "$NETWORK" ] || [ -z "$DATA_DIR" ]; then
+    echo_error "Missing required parameters"
+    echo_info "Usage: $0 <network> <data_dir>"
+    echo_info "  network: mainnet, testnet, or regtest"
+    echo_info "  data_dir: Path to data directory (e.g., ./bsv-data)"
+    echo_info ""
+    echo_info "Example: $0 mainnet ./bsv-data"
+    exit 1
+fi
 
 # Snapshot sources (these would be real URLs in production)
 declare -A SNAPSHOT_URLS=(
@@ -16,7 +27,7 @@ declare -A SNAPSHOT_URLS=(
 
 declare -A SNAPSHOT_SIZES=(
     ["mainnet"]="160GB"
-    ["testnet"]="30GB"
+    ["testnet"]="200GB"
 )
 
 check_disk_space() {
@@ -290,7 +301,7 @@ main() {
     
     # Check disk space (download + extraction requires 2x space)
     local required_space=350  # GB for mainnet (160GB snapshot + 160GB extracted + buffer)
-    [[ "$NETWORK" == "testnet" ]] && required_space=70  # 30GB + 30GB + buffer
+    [[ "$NETWORK" == "testnet" ]] && required_space=500  # 200GB snapshot + 300GB extracted
     
     echo_info "Snapshot will be downloaded and then extracted."
     echo_info "This requires temporary space for both the download and extracted data.""

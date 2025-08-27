@@ -20,4 +20,4 @@ if [ ! -x ./bsv/bin/bitcoin-cli ]; then
 fi
 
 # Pass all arguments to bitcoin-cli
-./bsv/bin/bitcoin-cli -conf=./bsv-data/bitcoin.conf "$@"
+./bsv/bin/bitcoin-cli -conf=$(realpath ./bsv-data/bitcoin.conf) "$@"

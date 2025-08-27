@@ -115,8 +115,13 @@ Simple commands to manage your SVNode:
 ./b.sh getblockchaininfo
 ./b.sh getpeerinfo
 
-# View logs
-tail -f ./bsv-data/debug.log
+# View logs (network-specific)
+# Mainnet:
+tail -f ./bsv-data/bitcoind.log
+# Testnet:
+tail -f ./bsv-data/testnet3/bitcoind.log  
+# Regtest:
+tail -f ./bsv-data/regtest/bitcoind.log
 ```
 
 ## File Locations
@@ -126,7 +131,10 @@ Default installation paths (in the script directory):
 - **Installation Directory**: `./bsv`
 - **Data Directory**: `./bsv-data`
 - **Configuration File**: `./bsv-data/bitcoin.conf`
-- **Debug Log**: `./bsv-data/debug.log`
+- **Log Files**:
+  - **Mainnet**: `./bsv-data/bitcoind.log`
+  - **Testnet**: `./bsv-data/testnet3/bitcoind.log`
+  - **Regtest**: `./bsv-data/regtest/bitcoind.log`
 
 ## RPC Access
 
@@ -162,7 +170,7 @@ cat /var/lib/bsv-data/bitcoin.conf
 
 3. Check logs:
 ```bash
-tail -f ./bsv-data/debug.log
+tail -f ./bsv-data/bitcoind.log
 ```
 
 ### Insufficient Disk Space
@@ -344,7 +352,7 @@ sha256sum testnet-snapshot-latest.tar.gz > testnet-snapshot-latest.tar.gz.sha256
 
 ### Important Notes
 - **Only include these directories**: `blocks/`, `chainstate/`, `database/`, `frozentxos/`, `merkle/`
-- **Exclude**: `bitcoin.conf`, `debug.log`, `peers.dat`, `banlist.dat`, and other config/log files
+- **Exclude**: `bitcoin.conf`, `bitcoind.log`, `peers.dat`, `banlist.dat`, and other config/log files
 - **Node must be stopped**: Never create snapshots while the node is running
 - **Pruned nodes only**: Full node snapshots would be prohibitively large
 - **Verify integrity**: Test extraction on a separate system before distribution

@@ -20,7 +20,7 @@ temp/
 
 # Logs
 *.log
-debug.log*
+bitcoind.log*
 
 # Backup files
 *backup*
