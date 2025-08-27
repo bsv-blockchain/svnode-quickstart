@@ -55,31 +55,6 @@ chmod +x setup.sh
 ./b.sh getblockchaininfo
 ```
 
-## Directory Structure
-
-```
-svnode-quickstart/
-├── setup.sh                    # Main interactive setup script
-├── start.sh                    # Start the SV Node
-├── stop.sh                     # Stop the SV Node gracefully
-├── restart.sh                  # Restart the SV Node
-├── clean.sh                    # Clean up SV Node files
-├── b.sh                        # Bitcoin CLI wrapper
-├── lib/
-│   ├── check_requirements.sh   # System requirements validation
-│   ├── download_node.sh        # Download and verify SV Node binaries
-│   ├── config_generator.sh     # Generate bitcoin.conf
-│   ├── snapshot_sync.sh        # Handle pruned snapshot downloads
-│   ├── colors.sh               # Terminal color formatting
-│   └── docker-test/            # Docker testing environment (non-x86 testing)
-│       ├── docker-compose.yml  # Docker testing environment
-│       └── docker-entrypoint.sh # Docker container setup script
-├── bsv/                        # SV Node installation (created by setup)
-├── bsv-data/                   # Node data directory (created by setup)
-├── downloads/                  # Download cache (created by setup)
-└── README.md                   # This file
-```
-
 ## Configuration Options
 
 ### Networks
@@ -169,13 +144,19 @@ Default installation paths (in the script directory):
 
 ## RPC Access
 
-The node's RPC interface is configured during setup. Default settings:
+The node's RPC interface is configured during setup with secure defaults:
+
+### Default Configuration (Secure)
 
 - **Mainnet RPC Port**: 8332
 - **Testnet RPC Port**: 18332
 - **Regtest RPC Port**: 18443
+- **Bind Address**: `127.0.0.1` (localhost only)
+- **Allowed IPs**: `127.0.0.1` (localhost only)
 
-Access the RPC interface:
+This configuration ensures the RPC interface is only accessible from the local machine, providing maximum security.
+
+### Local Access
 
 ```bash
 # Using the provided CLI wrapper
@@ -183,6 +164,35 @@ Access the RPC interface:
 
 # Or directly with bitcoin-cli
 ./bsv/bin/bitcoin-cli -conf=./bsv-data/bitcoin.conf getinfo
+```
+
+### Remote Access (Advanced - Use with Caution)
+
+If you need to access the RPC interface from other machines, you can modify the configuration in `./bsv-data/bitcoin.conf`:
+
+```ini
+# Allow connections from any IP (DANGEROUS - use with firewall)
+rpcallowip=0.0.0.0/0
+rpcbind=0.0.0.0
+
+# Or allow specific networks only (recommended for remote access)
+rpcallowip=192.168.1.0/24  # Allow local network
+rpcbind=0.0.0.0
+```
+
+**⚠️ Security Warning**: When enabling remote RPC access:
+- **Always use a firewall** to restrict access to trusted IPs only
+- **Never expose RPC ports to the internet** without proper authentication and encryption
+- **Use strong RPC credentials** (automatically generated during setup)
+- **Consider using SSH tunneling** for remote access instead of opening RPC ports directly
+
+Example firewall rules for remote access:
+```bash
+# Allow RPC access from specific IP only
+sudo ufw allow from 192.168.1.100 to any port 8332
+
+# Block public access
+sudo ufw deny 8332
 ```
 
 ## Troubleshooting
