@@ -65,14 +65,15 @@ svnode-quickstart/
 ├── restart.sh                  # Restart the SV Node
 ├── clean.sh                    # Clean up SV Node files
 ├── b.sh                        # Bitcoin CLI wrapper
-├── docker-compose.yml          # Docker testing environment
-├── docker-entrypoint.sh        # Docker container setup script
 ├── lib/
 │   ├── check_requirements.sh   # System requirements validation
 │   ├── download_node.sh        # Download and verify SV Node binaries
 │   ├── config_generator.sh     # Generate bitcoin.conf
 │   ├── snapshot_sync.sh        # Handle pruned snapshot downloads
-│   └── colors.sh               # Terminal color formatting
+│   ├── colors.sh               # Terminal color formatting
+│   └── docker-test/            # Docker testing environment (non-x86 testing)
+│       ├── docker-compose.yml  # Docker testing environment
+│       └── docker-entrypoint.sh # Docker container setup script
 ├── bsv/                        # SV Node installation (created by setup)
 ├── bsv-data/                   # Node data directory (created by setup)
 ├── downloads/                  # Download cache (created by setup)
@@ -310,9 +311,12 @@ To remove all SV Node files and start fresh:
 
 ## Docker Testing Environment
 
-A Docker Compose setup is provided for testing the installation scripts in a clean Ubuntu 24.04 x86_64 environment:
+A Docker Compose setup is provided for testing the installation scripts in a clean Ubuntu 24.04 x86_64 environment (primarily for non-x86 development machines):
 
 ```bash
+# Navigate to the docker test directory
+cd lib/docker-test
+
 # Start the test container
 docker-compose up -d
 

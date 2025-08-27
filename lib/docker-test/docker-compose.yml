@@ -5,7 +5,7 @@ services:
     container_name: svnode-test-container
     volumes:
       # Mount the entire project directory into the container
-      - .:/workspace
+      - ../..:/workspace
       # Mount the entrypoint script
       - ./docker-entrypoint.sh:/usr/local/bin/docker-entrypoint.sh:ro
     working_dir: /workspace
