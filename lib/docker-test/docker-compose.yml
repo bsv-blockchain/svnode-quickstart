@@ -12,7 +12,7 @@ services:
     stdin_open: true
     tty: true
     # Use custom entrypoint
-    entrypoint: ["/usr/local/bin/docker-entrypoint.sh"]
+    entrypoint: [ "/usr/local/bin/docker-entrypoint.sh" ]
     # Optional: Add network settings if needed for testing
     networks:
       - svnode-test-network

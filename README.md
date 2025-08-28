@@ -1,37 +1,43 @@
 # SV Node Quick Setup
 
-A comprehensive setup script and template collection for quickly deploying SV Node on the BSV Blockchain with interactive configuration, automatic installation, and flexible deployment options.
+A comprehensive setup script and template collection for quickly deploying SV Node on the BSV Blockchain with
+interactive configuration, automatic installation, and flexible deployment options.
 
 ## Quick Start
 
 1. Clone this repository:
+
 ```bash
 git clone https://github.com/bsv-blockchain/svnode-quickstart.git
 cd svnode-quickstart
 ```
 
 2. Make the setup script executable:
+
 ```bash
 chmod +x setup.sh
 ```
 
 3. Run the interactive setup:
+
 ```bash
 ./setup.sh
 ```
 
 4. Follow the prompts to configure your node:
-   - Select network (mainnet/testnet/regtest)
-   - Choose node type (pruned/full)
-   - Choose sync method (snapshot/genesis)
-   - Configure RPC credentials
+    - Select network (mainnet/testnet/regtest)
+    - Choose node type (pruned/full)
+    - Choose sync method (snapshot/genesis)
+    - Configure RPC credentials
 
 5. Start your node:
+
 ```bash
 ./start.sh
 ```
 
 6. Check status:
+
 ```bash
 ./cli.sh getblockchaininfo
 ```
@@ -47,29 +53,33 @@ chmod +x setup.sh
 ### Node Types
 
 - **Pruned Node**: Reduces disk usage by removing old spent transaction data (recommended for most users)
-  - Disk requirement: ~500GB
-  - Retains all unspent transaction outputs (UTXOs) - critical for validation
-  - Only removes historical spent transaction data from old blocks
-  - Cannot serve complete historical blocks to other nodes
-  - Suitable for applications, services, and wallet operations
+    - Disk requirement: ~500GB
+    - Retains all unspent transaction outputs (UTXOs) - critical for validation
+    - Only removes historical spent transaction data from old blocks
+    - Cannot serve complete historical blocks to other nodes
+    - Suitable for applications, services, and wallet operations
 
 - **Full Node**: Maintains complete blockchain history
-  - Disk requirement: ~15TB and growing
-  - Can serve the entire blockchain to other nodes
-  - Required for block explorers and archival purposes
+    - Disk requirement: ~15TB and growing
+    - Can serve the entire blockchain to other nodes
+    - Required for block explorers and archival purposes
 
 ### Sync Methods
 
 - **Snapshot Sync**: Downloads pruned blockchain data via HTTP using wget (recommended)
-  - Source: https://svnode-snapshots.bsvb.tech/ (provided as-is by the BSV Association)
-  - Both mainnet and testnet snapshots are pruned (contain recent blockchain data only)
-  - Incremental updates: Only downloads new files on subsequent syncs
-  - Resume support: Continues from where it left off if interrupted
-  - Mainnet: ~160GB of pruned blockchain data
-  - Testnet: ~30GB of pruned blockchain data
-  
-  **Note on Pruned Snapshots**: Pruned snapshots contain all unspent transaction outputs (UTXOs) but have removed historical spent transaction data from old blocks. This preserves your node's ability to validate new transactions and blocks while significantly reducing storage requirements. All consensus-critical data remains intact - only historical spent transactions that are no longer needed for validation are removed. Your node maintains full security and validation capabilities.
-  
+    - Source: https://svnode-snapshots.bsvb.tech/ (provided as-is by the BSV Association)
+    - Both mainnet and testnet snapshots are pruned (contain recent blockchain data only)
+    - Incremental updates: Only downloads new files on subsequent syncs
+    - Resume support: Continues from where it left off if interrupted
+    - Mainnet: ~160GB of pruned blockchain data
+    - Testnet: ~30GB of pruned blockchain data
+
+  **Note on Pruned Snapshots**: Pruned snapshots contain all unspent transaction outputs (UTXOs) but have removed
+  historical spent transaction data from old blocks. This preserves your node's ability to validate new transactions and
+  blocks while significantly reducing storage requirements. All consensus-critical data remains intact - only historical
+  spent transactions that are no longer needed for validation are removed. Your node maintains full security and
+  validation capabilities.
+
 - **Genesis Sync**: Start from block 0 and sync the entire blockchain (slower but builds complete history)
 
 ## Usage
@@ -111,9 +121,9 @@ Default installation paths (in the script directory):
 - **Downloads Directory**: `./downloads/` (temporary files, snapshots)
 - **Configuration File**: `./bsv-data/bitcoin.conf`
 - **Log Files**:
-  - **Mainnet**: `./bsv-data/bitcoind.log`
-  - **Testnet**: `./bsv-data/testnet3/bitcoind.log`
-  - **Regtest**: `./bsv-data/regtest/bitcoind.log`
+    - **Mainnet**: `./bsv-data/bitcoind.log`
+    - **Testnet**: `./bsv-data/testnet3/bitcoind.log`
+    - **Regtest**: `./bsv-data/regtest/bitcoind.log`
 
 ## RPC Access
 
@@ -141,7 +151,8 @@ This configuration ensures the RPC interface is only accessible from the local m
 
 ### Remote Access (Advanced - Use with Caution)
 
-If you need to access the RPC interface from other machines, you can modify the configuration in `./bsv-data/bitcoin.conf`:
+If you need to access the RPC interface from other machines, you can modify the configuration in
+`./bsv-data/bitcoin.conf`:
 
 ```ini
 # Allow connections from any IP (DANGEROUS - use with firewall)
@@ -154,12 +165,14 @@ rpcbind=0.0.0.0
 ```
 
 **⚠️ Security Warning**: When enabling remote RPC access:
+
 - **Always use a firewall** to restrict access to trusted IPs only
 - **Never expose RPC ports to the internet** without proper authentication and encryption
 - **Use strong RPC credentials** (automatically generated during setup)
 - **Consider using SSH tunneling** for remote access instead of opening RPC ports directly
 
 Example firewall rules for remote access:
+
 ```bash
 # Allow RPC access from specific IP only
 sudo ufw allow from 192.168.1.100 to any port 8332
@@ -173,16 +186,19 @@ sudo ufw deny 8332
 ### Node Won't Start
 
 1. Check system requirements:
+
 ```bash
 ./lib/check_requirements.sh
 ```
 
 2. Verify configuration:
+
 ```bash
 cat ./bsv-data/bitcoin.conf
 ```
 
 3. Check logs:
+
 ```bash
 tail -f ./bsv-data/bitcoind.log
 ```
@@ -218,7 +234,8 @@ To remove all SV Node files and start fresh:
 
 ## Docker Testing Environment
 
-A Docker Compose setup is provided for testing the installation scripts in a clean Ubuntu 24.04 x86_64 environment (primarily for non-x86 development machines):
+A Docker Compose setup is provided for testing the installation scripts in a clean Ubuntu 24.04 x86_64 environment (
+primarily for non-x86 development machines):
 
 ```bash
 # Navigate to the docker test directory
@@ -244,7 +261,8 @@ exit
 docker-compose down
 ```
 
-The Docker environment includes all required dependencies and provides an isolated testing environment that won't affect your host system. The container automatically installs necessary packages during startup.
+The Docker environment includes all required dependencies and provides an isolated testing environment that won't affect
+your host system. The container automatically installs necessary packages during startup.
 
 ## Updates
 
@@ -265,25 +283,32 @@ To update your SV Node to a newer version:
 
 Contributions are welcome! Please feel free to submit issues, feature requests, or pull requests.
 
-
 ## Support
 
 For issues with this setup script:
+
 - Open an issue on GitHub
 - Check existing issues for solutions
 
 For SV Node-specific support:
+
 - [BSV Blockchain Documentation](https://docs.bsvblockchain.org/)
 - [SV Node Documentation](https://docs.bsvblockchain.org/network-topology/nodes/sv-node)
 - [SV Node GitHub](https://github.com/bitcoin-sv/bitcoin-sv)
 
-
 ## Disclaimer
 
-This setup script is provided as-is without warranty. Always verify configurations and test thoroughly before using in production environments. Ensure you understand the implications of running a blockchain node, including disk space, bandwidth, and security considerations.
+This setup script is provided as-is without warranty. Always verify configurations and test thoroughly before using in
+production environments. Ensure you understand the implications of running a blockchain node, including disk space,
+bandwidth, and security considerations.
 
 ### Snapshot Trust
 
-The blockchain snapshots available at https://svnode-snapshots.bsvb.tech/ are provided as-is by the BSV Association. While these snapshots can significantly speed up initial node setup, it's up to each user to decide whether to trust these pre-synced snapshots or perform a full sync from the genesis block. Syncing from genesis takes longer but ensures you independently validate the entire blockchain history instead of only the new blocks and transactions coming in after the snapshot date.
+The blockchain snapshots available at https://svnode-snapshots.bsvb.tech/ are provided as-is by the BSV Association.
+While these snapshots can significantly speed up initial node setup, it's up to each user to decide whether to trust
+these pre-synced snapshots or perform a full sync from the genesis block. Syncing from genesis takes longer but ensures
+you independently validate the entire blockchain history instead of only the new blocks and transactions coming in after
+the snapshot date.
 
-When using snapshots, SV Node will automatically validate the loaded blockchain data on startup, verifying block headers, chain integrity, and the UTXO set. You can also run `./cli.sh verifychain` for additional verification.
+When using snapshots, SV Node will automatically validate the loaded blockchain data on startup, verifying block
+headers, chain integrity, and the UTXO set. You can also run `./cli.sh verifychain` for additional verification.
