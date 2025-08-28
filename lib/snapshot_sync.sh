@@ -101,11 +101,24 @@ install_rclone() {
     fi
 }
 
+check_snapshot_complete() {
+    local network="$1"
+    local height="$2"
+    local check_url="${SNAPSHOT_BASE_URL}/${network}/${height}/snapshot_date.txt"
+    
+    # Use curl to check if completion marker exists (HTTP 200 = complete)
+    if curl --head --silent --fail "${check_url}" >/dev/null 2>&1; then
+        return 0  # Snapshot is complete
+    else
+        return 1  # Snapshot is incomplete or in progress
+    fi
+}
+
 get_latest_snapshot_height() {
     local network="$1"
     local network_url="${SNAPSHOT_BASE_URL}/${network}/"
 
-    echo_info "Finding latest snapshot for ${network}..." >&2
+    echo_info "Finding latest completed snapshot for ${network}..." >&2
 
     # List the network directory to find available heights
     local heights_list
@@ -114,23 +127,37 @@ get_latest_snapshot_height() {
         return 1
     fi
 
-    # Extract heights (assuming directory names are heights followed by /)
-    local latest_height=0
+    # Extract heights and sort them in descending order
+    local heights_array=()
     while IFS= read -r line; do
         if [[ "$line" =~ ^([0-9]+)/$ ]]; then
-            local height="${BASH_REMATCH[1]}"
-            if [[ "$height" -gt "$latest_height" ]]; then
-                latest_height="$height"
-            fi
+            heights_array+=("${BASH_REMATCH[1]}")
         fi
     done <<< "$heights_list"
-
-    if [[ "$latest_height" -eq 0 ]]; then
-        echo_error "No valid snapshots found for ${network}" >&2
+    
+    # Sort heights in descending order
+    IFS=$'\n' sorted_heights=($(sort -rn <<<"${heights_array[*]}"))
+    unset IFS
+    
+    # Check each height starting from the latest to find a completed snapshot
+    local valid_height=0
+    for height in "${sorted_heights[@]}"; do
+        echo_info "Checking snapshot at height ${height}..." >&2
+        if check_snapshot_complete "$network" "$height"; then
+            echo_info "Found completed snapshot at height ${height}" >&2
+            valid_height="$height"
+            break
+        else
+            echo_warning "Snapshot at height ${height} is incomplete or in progress, skipping..." >&2
+        fi
+    done
+    
+    if [[ "$valid_height" -eq 0 ]]; then
+        echo_error "No completed snapshots found for ${network}" >&2
         return 1
     fi
 
-    echo "$latest_height"
+    echo "$valid_height"
     return 0
 }
 

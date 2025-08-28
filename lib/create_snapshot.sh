@@ -118,7 +118,13 @@ chmod 755 "$DEST_DIR"
 echo "Permissions updated successfully!"
 echo ""
 
+# Create completion marker file with timestamp
+COMPLETION_FILE="${DEST_DIR}/snapshot_date.txt"
+echo "$(date -u +"%Y-%m-%d %H:%M:%S UTC")" > "$COMPLETION_FILE"
+chmod 644 "$COMPLETION_FILE"
+
 echo "Sync completed successfully!"
+echo "Completion marker created: snapshot_date.txt"
 echo ""
 
 # Show what was synced
@@ -137,3 +143,4 @@ echo "Total snapshot size: $(du -sh "$DEST_DIR" | cut -f1)"
 echo ""
 
 echo "Snapshot available at: ${DEST_BASE_DIR}/${NETWORK}/${BLOCK_HEIGHT}/"
+echo "Completion date: $(cat "$COMPLETION_FILE")"

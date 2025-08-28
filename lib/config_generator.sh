@@ -133,7 +133,7 @@ EOF
 
     if [[ "$NODE_TYPE" == "pruned" ]]; then
         cat << EOF
-prune=1000 # 1GB, but at least last 288 blocks
+prune=10000 # 10GB, but at least last 288 blocks
 EOF
     else
         cat << EOF
