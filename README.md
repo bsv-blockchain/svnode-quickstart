@@ -66,7 +66,7 @@ chmod +x setup.sh
   - Incremental updates: Only downloads new files on subsequent syncs
   - Resume support: Continues from where it left off if interrupted
   - Mainnet: ~160GB of pruned blockchain data
-  - Testnet: ~20GB of pruned blockchain data
+  - Testnet: ~30GB of pruned blockchain data
   
   **Note on Pruned Snapshots**: Pruned snapshots contain all unspent transaction outputs (UTXOs) but have removed historical spent transaction data from old blocks. This preserves your node's ability to validate new transactions and blocks while significantly reducing storage requirements. All consensus-critical data remains intact - only historical spent transactions that are no longer needed for validation are removed. Your node maintains full security and validation capabilities.
   

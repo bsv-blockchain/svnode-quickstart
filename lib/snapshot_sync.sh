@@ -101,12 +101,54 @@ install_rclone() {
     fi
 }
 
+get_latest_snapshot_height() {
+    local network="$1"
+    local network_url="${SNAPSHOT_BASE_URL}/${network}/"
+
+    echo_info "Finding latest snapshot for ${network}..." >&2
+
+    # List the network directory to find available heights
+    local heights_list
+    if ! heights_list=$(rclone lsf ":http:" --http-url "${network_url}" 2>/dev/null); then
+        echo_error "Failed to list available snapshots for ${network}" >&2
+        return 1
+    fi
+
+    # Extract heights (assuming directory names are heights followed by /)
+    local latest_height=0
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^([0-9]+)/$ ]]; then
+            local height="${BASH_REMATCH[1]}"
+            if [[ "$height" -gt "$latest_height" ]]; then
+                latest_height="$height"
+            fi
+        fi
+    done <<< "$heights_list"
+
+    if [[ "$latest_height" -eq 0 ]]; then
+        echo_error "No valid snapshots found for ${network}" >&2
+        return 1
+    fi
+
+    echo "$latest_height"
+    return 0
+}
+
 sync_snapshot() {
     local network="$1"
     local data_dir="$2"
-    local base_url="${SNAPSHOT_BASE_URL}/${network}/"
+
+    # Get the latest snapshot height
+    local snapshot_height
+    if ! snapshot_height=$(get_latest_snapshot_height "$network"); then
+        echo_error "Cannot determine latest snapshot height"
+        return 1
+    fi
+
+    local base_url="${SNAPSHOT_BASE_URL}/${network}/${snapshot_height}/"
 
     echo_info "Syncing ${network} snapshot from: ${base_url}"
+    echo_info "Snapshot height: ${snapshot_height}"
     echo_info "Destination: ${data_dir}"
     echo_warning "This may take several hours depending on your connection speed."
     echo ""
@@ -232,7 +274,7 @@ main() {
 
     # Check disk space
     local required_space=200  # GB for mainnet
-    [[ "$NETWORK" == "testnet" ]] && required_space=250  # GB for testnet (full node)
+    [[ "$NETWORK" == "testnet" ]] && required_space=30  # GB for testnet (full node)
 
     echo_info "Checking disk space requirements..."
 
