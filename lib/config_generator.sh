@@ -84,19 +84,11 @@ EOF
         cat << EOF
 # Tuning options (Mainnet)
 maxmempool=16GB
-dbcache=16GB
+dbcache=4GB
 maxsigcachesize=256MB
 maxscriptcachesize=256MB
-threadsperblock=16
-txnthreadsperblock=16
 recvinvqueuefactor=100
 maxprotocolrecvpayloadlength=1000000000
-maxstdtxvalidationduration=50
-maxnonstdtxvalidationduration=5000
-maxtxnvalidatorasynctasksrunduration=30000
-numstdtxvalidationthreads=8
-numnonstdtxvalidationthreads=8
-txnvalidationqueuesmaxmemory=8GB
 
 EOF
     else
@@ -104,19 +96,11 @@ EOF
         cat << EOF
 # Tuning options (Testnet - reduced)
 maxmempool=4GB
-dbcache=2GB
+dbcache=1GB
 maxsigcachesize=128MB
 maxscriptcachesize=128MB
-threadsperblock=8
-txnthreadsperblock=8
 recvinvqueuefactor=50
 maxprotocolrecvpayloadlength=1000000000
-maxstdtxvalidationduration=50
-maxnonstdtxvalidationduration=5000
-maxtxnvalidatorasynctasksrunduration=15000
-numstdtxvalidationthreads=4
-numnonstdtxvalidationthreads=4
-txnvalidationqueuesmaxmemory=4GB
 
 EOF
     fi
