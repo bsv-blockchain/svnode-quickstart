@@ -165,7 +165,15 @@ sync_snapshot() {
     local network="$1"
     local data_dir="$2"
 
-    # Get the latest snapshot height
+    # Check if rclone is available, install if needed (before using it)
+    if ! command -v rclone &> /dev/null; then
+        if ! install_rclone; then
+            echo_error "Cannot proceed without rclone."
+            return 1
+        fi
+    fi
+
+    # Get the latest snapshot height (now that rclone is available)
     local snapshot_height
     if ! snapshot_height=$(get_latest_snapshot_height "$network"); then
         echo_error "Cannot determine latest snapshot height"
@@ -179,14 +187,6 @@ sync_snapshot() {
     echo_info "Destination: ${data_dir}"
     echo_warning "This may take several hours depending on your connection speed."
     echo ""
-
-    # Check if rclone is available, install if needed
-    if ! command -v rclone &> /dev/null; then
-        if ! install_rclone; then
-            echo_error "Cannot proceed without rclone."
-            return 1
-        fi
-    fi
 
     # Determine if this is an update
     if check_existing_data "$data_dir" "$network"; then
