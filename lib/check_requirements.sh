@@ -134,12 +134,14 @@ check_dependencies() {
     done
     
     # Check for rclone (required for snapshots)
+    local rclone_missing=false
     if command -v rclone &> /dev/null; then
         echo_success "Found: rclone (required for snapshots)"
     else
         echo_warning "Missing: rclone"
         echo_warning "  rclone is required for blockchain snapshot sync"
         echo_info "  you will be prompted to install it if you choose snapshots"
+        rclone_missing=true
     fi
     
     # Check for sudo/su access
@@ -177,7 +179,12 @@ check_dependencies() {
         
         return 1
     else
-        echo_success "All required dependencies are installed."
+        if [ "$rclone_missing" = true ]; then
+            echo_success "Core dependencies are installed."
+            echo_info "Note: rclone will be installed automatically if you choose snapshot sync."
+        else
+            echo_success "All required dependencies are installed."
+        fi
     fi
     
     return 0

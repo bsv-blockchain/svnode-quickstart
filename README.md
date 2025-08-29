@@ -302,13 +302,45 @@ This setup script is provided as-is without warranty. Always verify configuratio
 production environments. Ensure you understand the implications of running a blockchain node, including disk space,
 bandwidth, and security considerations.
 
-### Snapshot Trust
+### Snapshot Trust and Security Considerations
 
 The blockchain snapshots available at https://svnode-snapshots.bsvb.tech/ are provided as-is by the BSV Association.
-While these snapshots can significantly speed up initial node setup, it's up to each user to decide whether to trust
-these pre-synced snapshots or perform a full sync from the genesis block. Syncing from genesis takes longer but ensures
-you independently validate the entire blockchain history instead of only the new blocks and transactions coming in after
-the snapshot date.
+While these snapshots can significantly speed up initial node setup, it's critical to understand the security
+implications before using them in different environments.
 
-When using snapshots, SV Node will automatically validate the loaded blockchain data on startup, verifying block
-headers, chain integrity, and the UTXO set. You can also run `./cli.sh verifychain` for additional verification.
+#### **Usage Guidelines and Best Practices**
+
+**Snapshots are suitable for:**
+- **Quick deployment** for businesses to get operational faster
+- **Development and testing environments**
+- **Non-mining passive nodes**
+- **Applications processing confirmed transactions**
+
+**Important considerations for production use:**
+- **0-confirmation transactions**: Do not rely on 0-confirmation transactions from snapshot-initialized nodes
+- **Dual-node strategy**: Use snapshots for immediate deployment while simultaneously running a full genesis sync on a separate node
+- **Network consensus**: Trust the network consensus mechanism - if invalid data exists in snapshots, the network will reject it
+
+#### **How Snapshots Work with Network Consensus**
+
+**Network Protection**: The Bitcoin SV network's consensus mechanism ensures that any invalid transactions or outputs in snapshots will be rejected by the network. If your snapshot-initialized node encounters invalid data, it will either:
+- Reject the invalid data and continue following the valid chain
+- Temporarily halt until the issue is resolved through network consensus
+
+**Recommended Deployment Strategy**: 
+- **Immediate operations**: Use snapshot sync for quick deployment to start operations
+- **Parallel validation**: Run a separate node with full genesis sync for maximum validation
+- **Migration path**: Once your genesis-synced node is ready, you can migrate operations or use it for additional validation
+
+#### **Security Considerations**
+
+**Trust Model**: Using snapshots requires trusting the snapshot provider has not included manipulated data, though the network's consensus mechanism provides protection against invalid data propagation.
+
+**0-Confirmation Risk**: Applications relying on 0-confirmation transactions should use genesis-synced nodes, as snapshot initialization bypasses the historical validation that helps detect certain attack vectors.
+
+**For Enhanced Security**: 
+- Create and maintain your own snapshots from genesis-validated nodes
+- Use `./cli.sh verifychain` for additional validation
+- Monitor synchronization status and network consensus alignment
+
+**Validation**: SV Node automatically validates loaded snapshot data on startup, verifying block headers, chain integrity, and the UTXO set. The network consensus mechanism provides ongoing protection against invalid data.

@@ -13,10 +13,5 @@ services:
     tty: true
     # Use custom entrypoint
     entrypoint: [ "/usr/local/bin/docker-entrypoint.sh" ]
-    # Optional: Add network settings if needed for testing
-    networks:
-      - svnode-test-network
-
-networks:
-  svnode-test-network:
-    driver: bridge
+    # Use host networking for direct access to all ports
+    network_mode: host

@@ -65,10 +65,13 @@ banclientua=BCH
 # RPC settings
 rpcuser=$RPC_USER
 rpcpassword=$RPC_PASSWORD
-rpcallowip=127.0.0.1
-rpcbind=127.0.0.1
 rpcworkqueue=600
 rpcthreads=16
+# rpcallowip=127.0.0.1
+#       Allow JSON-RPC connections from specified source. Valid for <ip> are a
+#       single IP (e.g. 1.2.3.4), a network/netmask (e.g.
+#       1.2.3.4/255.255.255.0) or a network/CIDR (e.g. 1.2.3.4/24). This
+#       option can be specified multiple times
 
 # Required Consensus Rules for Genesis
 excessiveblocksize=10GB
@@ -110,9 +113,9 @@ EOF
 minminingtxfee=0.00000001
 mintxfee=0.00000001
 
-# ZeroMQ notification options (uncomment to enable)
-#zmqpubhashtx=tcp://127.0.0.1:28332
-#zmqpubhashblock=tcp://127.0.0.1:28332
+# ZeroMQ notification options (uncomment to enable), see https://github.com/bitcoin-sv/bitcoin-sv/blob/master/doc/zmq.md
+#zmqpubhashtx2=tcp://127.0.0.1:28332
+#zmqpubhashblock2=tcp://127.0.0.1:28333
 
 # Debug options
 # Options: net, tor, mempool, http, bench, zmq, db, rpc, addrman, selectcoins,
@@ -175,8 +178,6 @@ maxconnections=50
 # RPC settings
 rpcuser=$RPC_USER
 rpcpassword=$RPC_PASSWORD
-rpcallowip=127.0.0.1
-rpcbind=127.0.0.1
 rpcworkqueue=100
 rpcthreads=4
 
