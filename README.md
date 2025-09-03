@@ -12,34 +12,28 @@ git clone https://github.com/bsv-blockchain/svnode-quickstart.git
 cd svnode-quickstart
 ```
 
-2. Make the setup script executable:
-
-```bash
-chmod +x setup.sh
-```
-
-3. Run the interactive setup:
+2. Run the interactive setup:
 
 ```bash
 ./setup.sh
 ```
 
-4. Follow the prompts to configure your node:
+3. Follow the prompts to configure your node:
     - Select network (mainnet/testnet/regtest)
     - Choose node type (pruned/full)
     - Choose sync method (snapshot/genesis)
     - Configure RPC credentials
 
-5. Start your node:
+4. Start your node:
 
 ```bash
 ./start.sh
 ```
 
-6. Check status:
+5. Check status:
 
 ```bash
-./cli.sh getblockchaininfo
+./cli.sh getinfo
 ```
 
 ## Configuration Options
