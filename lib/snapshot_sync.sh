@@ -25,7 +25,7 @@ SNAPSHOT_BASE_URL="https://svnode-snapshots.bsvb.tech"
 # Snapshot sizes (approximate)
 declare -A SNAPSHOT_SIZES=(
     ["mainnet"]="160GB"
-    ["testnet"]="200GB"
+    ["testnet"]="30GB"
 )
 
 check_disk_space() {
@@ -105,7 +105,7 @@ check_snapshot_complete() {
     local network="$1"
     local height="$2"
     local check_url="${SNAPSHOT_BASE_URL}/${network}/${height}/snapshot_date.txt"
-    
+
     # Use curl to check if completion marker exists (HTTP 200 = complete)
     if curl --head --silent --fail "${check_url}" >/dev/null 2>&1; then
         return 0  # Snapshot is complete
@@ -134,11 +134,11 @@ get_latest_snapshot_height() {
             heights_array+=("${BASH_REMATCH[1]}")
         fi
     done <<< "$heights_list"
-    
+
     # Sort heights in descending order
     IFS=$'\n' sorted_heights=($(sort -rn <<<"${heights_array[*]}"))
     unset IFS
-    
+
     # Check each height starting from the latest to find a completed snapshot
     local valid_height=0
     for height in "${sorted_heights[@]}"; do
@@ -151,7 +151,7 @@ get_latest_snapshot_height() {
             echo_warning "Snapshot at height ${height} is incomplete or in progress, skipping..." >&2
         fi
     done
-    
+
     if [[ "$valid_height" -eq 0 ]]; then
         echo_error "No completed snapshots found for ${network}" >&2
         return 1
