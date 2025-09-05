@@ -24,7 +24,7 @@ SNAPSHOT_BASE_URL="https://svnode-snapshots.bsvb.tech"
 
 # Snapshot sizes (approximate)
 declare -A SNAPSHOT_SIZES=(
-    ["mainnet"]="160GB"
+    ["mainnet"]="900GB"
     ["testnet"]="30GB"
 )
 
