@@ -20,8 +20,13 @@ if [ -z "$NODE_TYPE" ] || [ -z "$NETWORK" ]; then
 fi
 
 # Minimum disk space requirements (in GB)
-PRUNED_MIN_SPACE=200   # 200GB (160GB snapshot + buffer for growth)
-FULL_MIN_SPACE=15000   # 15TB"
+if [[ "$NETWORK" == "testnet" ]]; then
+    PRUNED_MIN_SPACE=30    # 30GB for testnet
+    FULL_MIN_SPACE=300     # 300GB for testnet full node
+else
+    PRUNED_MIN_SPACE=900   # 900GB for mainnet
+    FULL_MIN_SPACE=15000   # 15TB for mainnet full node
+fi
 
 check_os() {
     echo_info "Checking operating system..."
@@ -67,10 +72,7 @@ check_disk_space() {
     fi
     
     # Override for specific networks
-    if [[ "$NETWORK" == "testnet" ]]; then
-        required_space=300
-        echo_info "Testnet detected. Requirement set to ${required_space}GB (full chain, not pruned)."
-    elif [[ "$NETWORK" == "regtest" ]]; then
+    if [[ "$NETWORK" == "regtest" ]]; then
         required_space=10
         echo_info "Regtest detected. Minimal requirement of ${required_space}GB."
     fi
