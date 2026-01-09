@@ -14,7 +14,7 @@ DEFAULT_DATA_DIR="./bsv-data"
 NETWORK="mainnet"
 NODE_TYPE="pruned"
 SYNC_METHOD="snapshot"
-BSV_VERSION="1.1.1"
+BSV_VERSION="1.2.0"
 
 # Configuration variables
 INSTALL_DIR=""
