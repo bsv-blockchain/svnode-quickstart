@@ -157,7 +157,7 @@ list_versions() {
 get_latest_version() {
     # In production, this would fetch from an API or check the website
     # For now, return hardcoded latest
-    echo "1.2.0"
+    echo "1.2.1"
 }
 
 main() {

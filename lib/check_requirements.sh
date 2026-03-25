@@ -30,19 +30,19 @@ fi
 
 check_os() {
     echo_info "Checking operating system..."
-    
+
     if [[ "$OSTYPE" != "linux-gnu"* ]]; then
         echo_warning "This script is designed for Linux systems."
         echo_warning "Current OS: $OSTYPE"
         echo_warning "The script may not work correctly on this system."
         return 1
     fi
-    
+
     # Check for specific distributions
     if [ -f /etc/os-release ]; then
         . /etc/os-release
         echo_info "Detected: $NAME $VERSION"
-        
+
         case "$ID" in
             ubuntu|debian|fedora|centos|rhel|arch|manjaro|opensuse*)
                 echo_success "Supported Linux distribution detected."
@@ -55,13 +55,13 @@ check_os() {
     else
         echo_warning "Cannot determine Linux distribution."
     fi
-    
+
     return 0
 }
 
 check_disk_space() {
     echo_info "Checking disk space..."
-    
+
     local required_space
     if [[ "$NODE_TYPE" == "full" ]]; then
         required_space=$FULL_MIN_SPACE
@@ -70,26 +70,26 @@ check_disk_space() {
         required_space=$PRUNED_MIN_SPACE
         echo_info "Pruned node selected. Checking for ${required_space}GB available space..."
     fi
-    
+
     # Override for specific networks
     if [[ "$NETWORK" == "regtest" ]]; then
         required_space=10
         echo_info "Regtest detected. Minimal requirement of ${required_space}GB."
     fi
-    
+
     # Get available disk space in GB for root partition
     local available_space=$(df / | awk 'NR==2 {print int($4/1048576)}')
-    
+
     echo_info "Available disk space: ${available_space}GB"
-    
+
     if [ "$available_space" -lt "$required_space" ]; then
         echo_error "Insufficient disk space!"
         echo_error "Required: ${required_space}GB, Available: ${available_space}GB"
-        
+
         if [[ "$NODE_TYPE" == "full" ]]; then
             echo_warning "Consider using a pruned node to reduce disk requirements."
         fi
-        
+
         echo_yellow "Do you want to continue anyway? (not recommended) [y/N]: "
         read -r response
         if [[ ! "$response" =~ ^[Yy]$ ]]; then
@@ -98,11 +98,11 @@ check_disk_space() {
     else
         echo_success "Sufficient disk space available."
     fi
-    
+
     # Check for SSD
     echo_info "Checking disk type..."
     local disk_device=$(df / | awk 'NR==2 {print $1}' | sed 's/[0-9]*$//')
-    
+
     if command -v lsblk &> /dev/null; then
         local rotation=$(lsblk -d -n -o ROTA "$disk_device" 2>/dev/null | head -n1)
         if [[ "$rotation" == "0" ]]; then
@@ -114,18 +114,18 @@ check_disk_space() {
             echo_info "Could not determine disk type."
         fi
     fi
-    
+
     return 0
 }
 
 check_dependencies() {
     echo_info "Checking required dependencies..."
-    
+
     local missing_deps=()
-    
+
     # Check for required commands
     local commands=("curl" "tar" "sha256sum" "openssl")
-    
+
     for cmd in "${commands[@]}"; do
         if ! command -v "$cmd" &> /dev/null; then
             missing_deps+=("$cmd")
@@ -134,7 +134,7 @@ check_dependencies() {
             echo_success "Found: $cmd"
         fi
     done
-    
+
     # Check for rclone (required for snapshots)
     local rclone_missing=false
     if command -v rclone &> /dev/null; then
@@ -145,7 +145,7 @@ check_dependencies() {
         echo_info "  you will be prompted to install it if you choose snapshots"
         rclone_missing=true
     fi
-    
+
     # Check for sudo/su access
     if command -v sudo &> /dev/null; then
         if sudo -n true 2>/dev/null; then
@@ -159,11 +159,11 @@ check_dependencies() {
         echo_warning "No sudo access and not running as root."
         echo_warning "Installation may require manual privilege elevation."
     fi
-    
+
     # If there are missing dependencies, offer to install them
     if [ ${#missing_deps[@]} -gt 0 ]; then
         echo_warning "Missing dependencies: ${missing_deps[*]}"
-        
+
         # Detect package manager and offer to install
         if command -v apt-get &> /dev/null; then
             echo_info "Detected apt package manager."
@@ -178,7 +178,7 @@ check_dependencies() {
             echo_info "Detected pacman package manager."
             echo_yellow "Install missing dependencies with: sudo pacman -S ${missing_deps[*]}"
         fi
-        
+
         return 1
     else
         if [ "$rclone_missing" = true ]; then
@@ -188,13 +188,13 @@ check_dependencies() {
             echo_success "All required dependencies are installed."
         fi
     fi
-    
+
     return 0
 }
 
 check_network() {
     echo_info "Checking network connectivity..."
-    
+
     # Test connectivity to BSV download servers using actual URL structure
     if curl -s --head --connect-timeout 5 https://releases-svnode.bsvblockchain.org > /dev/null 2>&1; then
         echo_success "Can reach Bitcoin SV download server."
@@ -202,45 +202,45 @@ check_network() {
         echo_warning "Cannot reach Bitcoin SV download server."
         echo_warning "This may cause issues during installation."
     fi
-    
+
     # Test general internet connectivity
     if ping -c 1 -W 2 8.8.8.8 &> /dev/null; then
         echo_success "Internet connectivity confirmed."
     else
         echo_warning "Limited or no internet connectivity detected."
     fi
-    
+
     return 0
 }
 
 check_ports() {
     echo_info "Checking default ports..."
-    
+
     # Check if default BSV ports are in use
     local mainnet_port=8333
     local testnet_port=18333
     local rpc_mainnet=8332
     local rpc_testnet=18332
-    
+
     for port in $mainnet_port $testnet_port $rpc_mainnet $rpc_testnet; do
         if netstat -tuln 2>/dev/null | grep -q ":$port "; then
             echo_warning "Port $port is already in use."
             echo_warning "This may conflict with SVNode operation."
         fi
     done
-    
+
     echo_info "Port check complete."
     return 0
 }
 
 check_memory() {
     echo_info "Checking system memory..."
-    
+
     local total_mem=$(free -g | awk 'NR==2 {print $2}')
     local available_mem=$(free -g | awk 'NR==2 {print $7}')
     echo_info "Total RAM: ${total_mem}GB"
     echo_info "Available RAM: ${available_mem}GB"
-    
+
     # Set memory requirements based on network
     local required_mem
     if [[ "$NETWORK" == "mainnet" ]]; then
@@ -256,11 +256,11 @@ check_memory() {
         echo_error "Unknown network: $NETWORK"
         return 1
     fi
-    
+
     if [ "$available_mem" -lt "$required_mem" ]; then
         echo_warning "Available memory (${available_mem}GB) is less than recommended (${required_mem}GB)."
         echo_warning "The node may run slowly or encounter performance issues."
-        
+
         if [[ "$NETWORK" == "mainnet" ]]; then
             echo_warning "For mainnet, consider upgrading to at least 128GB RAM for optimal performance."
         elif [[ "$NETWORK" == "testnet" ]]; then
@@ -269,35 +269,35 @@ check_memory() {
     else
         echo_success "Sufficient memory available for $NETWORK."
     fi
-    
+
     return 0
 }
 
 main() {
     echo_green "=== System Requirements Check ==="
     echo ""
-    
+
     local failed=0
-    
+
     # Run all checks
     check_os || failed=1
     echo ""
-    
+
     check_disk_space || failed=1
     echo ""
-    
+
     check_dependencies || failed=1
     echo ""
-    
+
     check_memory || failed=1
     echo ""
-    
+
     check_network || failed=1
     echo ""
-    
+
     check_ports || failed=1
     echo ""
-    
+
     if [ $failed -eq 0 ]; then
         echo_green "=== All checks passed ==="
         return 0
