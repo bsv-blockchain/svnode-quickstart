@@ -153,7 +153,10 @@ NO_PROGRESS_SECONDS="${NO_PROGRESS_SECONDS:-900}" # give up after this long with
 # (checked once the response is in; a server ignoring Range is refused and the
 # checksum fails the stream), and the checksum over the whole stream catches
 # anything that still goes wrong. Errors that a retry cannot fix (HTTP 4xx, a
-# failed write because the unpacking side died, e.g. a full disk) stop at once.
+# failed write because the unpacking side died) stop at once. A disk that fills
+# up mid-run does not stop the download early: GNU tar reports each failed write
+# but reads on to the end, and the run fails on its exit status after the whole
+# archive is in. The free-space check before the download covers the usual case.
 fetch_resumable() {
     local url="$1"
     local total="$2"

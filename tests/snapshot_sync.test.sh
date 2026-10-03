@@ -209,7 +209,7 @@ D="$T/d14"; mkdir -p "$D"
 sync_snapshot mainnet "$D" >/dev/null 2>&1; rc=$?
 expect "14 rc" "$rc" '^0$'
 
-# 15. a full disk (tar dies) fails at once, without retrying the download
+# 15. the unpacking side dying (tar killed by SIGXFSZ) fails at once, without retrying
 start_server
 D="$T/d15"; existing "$D"
 s=$(date +%s); out=$( (ulimit -f 100; sync_snapshot mainnet "$D") 2>&1); rc=$?
