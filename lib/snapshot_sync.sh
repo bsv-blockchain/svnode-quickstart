@@ -19,13 +19,23 @@ if [ -z "$NETWORK" ] || [ -z "$DATA_DIR" ]; then
     exit 1
 fi
 
-# Snapshot base URL
-SNAPSHOT_BASE_URL="https://svnode-snapshots.bsvb.tech"
+# Snapshots are published by the BSV Association to public, S3-compatible
+# object storage (OVHcloud):
+#   <network>/latest.json                          height, file, bytes, sha256
+#   <network>/<height>/svnode-<network>-<height>.tar.gz(.sha256)
+#   <network>/<height>/snapshot_date.txt           written last: completion marker
+# Override for testing: SNAPSHOT_BASE_URL=http://... ./lib/snapshot_sync.sh ...
+SNAPSHOT_BASE_URL="${SNAPSHOT_BASE_URL:-https://bsva-svnode-snapshots.s3.gra.io.cloud.ovh.net}"
 
-# Snapshot sizes (approximate)
+# Unpacked snapshot sizes (approximate) and the free space needed to unpack.
+# The archive is streamed and unpacked on the fly, so it never sits on disk.
 declare -A SNAPSHOT_SIZES=(
-    ["mainnet"]="900GB"
-    ["testnet"]="30GB"
+    ["mainnet"]="~600GB"
+    ["testnet"]="~30GB"
+)
+declare -A SNAPSHOT_SPACE_GB=(
+    ["mainnet"]=650
+    ["testnet"]=35
 )
 
 check_disk_space() {
@@ -44,22 +54,26 @@ check_disk_space() {
     return 0
 }
 
+# Directory the snapshot folders belong in for a network.
+network_dir() {
+    local data_dir="$1"
+    local network="$2"
+    case "$network" in
+        testnet) echo "$data_dir/testnet3" ;;
+        regtest) echo "$data_dir/regtest" ;;
+        *)       echo "$data_dir" ;;
+    esac
+}
+
 check_existing_data() {
     local data_dir="$1"
     local network="$2"
-
-    # Check for existing blockchain data
-    local target_dir="$data_dir"
-    if [[ "$network" == "testnet" ]]; then
-        target_dir="$data_dir/testnet3"
-    elif [[ "$network" == "regtest" ]]; then
-        target_dir="$data_dir/regtest"
-    fi
+    local target_dir
+    target_dir=$(network_dir "$data_dir" "$network")
 
     if [ -d "$target_dir/blocks" ] && [ "$(ls -A "$target_dir/blocks" 2>/dev/null | wc -l)" -gt 0 ]; then
         echo_info "Found existing blockchain data in $target_dir"
-        echo_yellow "This will update your existing data with the latest snapshot."
-        echo_yellow "New and updated files will be downloaded."
+        echo_yellow "It will be replaced by the snapshot once the download has been verified."
         echo ""
         return 0
     fi
@@ -67,171 +81,432 @@ check_existing_data() {
     return 1
 }
 
-install_rclone() {
-    echo_warning "rclone is required for snapshot sync but is not installed."
-    echo_info "rclone can be installed automatically using the official installer:"
-    echo_info "  curl https://rclone.org/install.sh | sudo bash"
-    echo ""
-
-    read -p "$(echo_yellow "Install rclone automatically? [y/N]: ")" response
-    response=${response:-N}
-
-    if [[ ! "$response" =~ ^[Yy]$ ]]; then
-        echo_info "Skipping rclone installation."
-        echo_info "Please install rclone manually and run the sync again:"
-        echo_info "  curl https://rclone.org/install.sh | sudo bash"
-        return 1
-    fi
-
-    echo_info "Installing rclone..."
-    if command -v sudo &> /dev/null; then
-        if curl -s https://rclone.org/install.sh | sudo bash; then
-            echo_success "rclone installed successfully."
-            return 0
-        else
-            echo_error "Failed to install rclone automatically."
-            echo_info "Please install rclone manually:"
-            echo_info "  curl https://rclone.org/install.sh | sudo bash"
-            return 1
-        fi
-    else
-        echo_error "sudo not available. Please install rclone manually:"
-        echo_info "  curl https://rclone.org/install.sh | bash"
-        return 1
-    fi
-}
-
 check_snapshot_complete() {
     local network="$1"
     local height="$2"
     local check_url="${SNAPSHOT_BASE_URL}/${network}/${height}/snapshot_date.txt"
 
-    # Use curl to check if completion marker exists (HTTP 200 = complete)
+    # The completion marker is written last; HTTP 200 means the snapshot is complete.
     if curl --head --silent --fail "${check_url}" >/dev/null 2>&1; then
-        return 0  # Snapshot is complete
+        return 0
     else
-        return 1  # Snapshot is incomplete or in progress
+        return 1
     fi
 }
 
-get_latest_snapshot_height() {
+# json_field JSON KEY: the value of a flat string or number field.
+json_field() {
+    local json="$1"
+    local key="$2"
+    if [[ "$json" =~ \"$key\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]]; then
+        echo "${BASH_REMATCH[1]}"
+    elif [[ "$json" =~ \"$key\"[[:space:]]*:[[:space:]]*([0-9]+) ]]; then
+        echo "${BASH_REMATCH[1]}"
+    fi
+}
+
+# Reads <network>/latest.json into SNAP_HEIGHT, SNAP_FILE, SNAP_BYTES,
+# SNAP_SHA256 and SNAP_CREATED, and checks the snapshot is complete.
+fetch_latest_info() {
     local network="$1"
-    local network_url="${SNAPSHOT_BASE_URL}/${network}/"
+    local json
 
-    echo_info "Finding latest completed snapshot for ${network}..." >&2
-
-    # List the network directory to find available heights
-    local heights_list
-    if ! heights_list=$(rclone lsf ":http:" --http-url "${network_url}" 2>/dev/null); then
-        echo_error "Failed to list available snapshots for ${network}" >&2
+    echo_info "Finding the latest snapshot for ${network}..." >&2
+    if ! json=$(curl --silent --show-error --fail --retry 3 "${SNAPSHOT_BASE_URL}/${network}/latest.json" 2>/dev/null); then
+        echo_error "No snapshot is published for ${network}" >&2
         return 1
     fi
 
-    # Extract heights and sort them in descending order
-    local heights_array=()
-    while IFS= read -r line; do
-        if [[ "$line" =~ ^([0-9]+)/$ ]]; then
-            heights_array+=("${BASH_REMATCH[1]}")
-        fi
-    done <<< "$heights_list"
+    SNAP_HEIGHT=$(json_field "$json" height)
+    SNAP_FILE=$(json_field "$json" file)
+    SNAP_BYTES=$(json_field "$json" bytes)
+    SNAP_SHA256=$(json_field "$json" sha256)
+    SNAP_CREATED=$(json_field "$json" created)
 
-    # Sort heights in descending order
-    IFS=$'\n' sorted_heights=($(sort -rn <<<"${heights_array[*]}"))
-    unset IFS
-
-    # Check each height starting from the latest to find a completed snapshot
-    local valid_height=0
-    for height in "${sorted_heights[@]}"; do
-        echo_info "Checking snapshot at height ${height}..." >&2
-        if check_snapshot_complete "$network" "$height"; then
-            echo_info "Found completed snapshot at height ${height}" >&2
-            valid_height="$height"
-            break
-        else
-            echo_warning "Snapshot at height ${height} is incomplete or in progress, skipping..." >&2
-        fi
-    done
-
-    if [[ "$valid_height" -eq 0 ]]; then
-        echo_error "No completed snapshots found for ${network}" >&2
+    if [[ ! "$SNAP_HEIGHT" =~ ^[0-9]+$ || "$SNAP_FILE" != "svnode-${network}-${SNAP_HEIGHT}.tar.gz" \
+          || ! "$SNAP_BYTES" =~ ^[1-9][0-9]*$ || ! "$SNAP_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+        echo_error "The snapshot information for ${network} is incomplete" >&2
         return 1
     fi
 
-    echo "$valid_height"
+    if ! check_snapshot_complete "$network" "$SNAP_HEIGHT"; then
+        echo_error "The snapshot at height ${SNAP_HEIGHT} is not complete yet" >&2
+        return 1
+    fi
+
+    echo_info "Latest snapshot: height ${SNAP_HEIGHT}, created ${SNAP_CREATED:-unknown}" >&2
     return 0
 }
 
+SNAPSHOT_FOLDERS=(blocks chainstate frozentxos merkle)
+
+# Download tuning; overridable for tests.
+RESUME_DELAY="${RESUME_DELAY:-2}"                 # pause before a resume; doubles while no progress, up to 60s
+STALL_SECONDS="${STALL_SECONDS:-60}"              # below 1KB/s for this long = stalled
+NO_PROGRESS_SECONDS="${NO_PROGRESS_SECONDS:-900}" # give up after this long without a byte
+
+# fetch_resumable URL TOTAL_BYTES CTL_DIR: writes the object to stdout. When a
+# connection drops, stalls or the host is briefly unreachable, it continues
+# with an HTTP Range request from the last byte received, so one long stream
+# survives network trouble; it gives up after NO_PROGRESS_SECONDS without a
+# byte. Bytes are only ever appended in order, a resumed response must be 206
+# (checked once the response is in; a server ignoring Range is refused and the
+# checksum fails the stream), and the checksum over the whole stream catches
+# anything that still goes wrong. Errors that a retry cannot fix (HTTP 4xx, a
+# failed write because the unpacking side died) stop at once. A disk that fills
+# up mid-run does not stop the download early: GNU tar reports each failed write
+# but reads on to the end, and the run fails on its exit status after the whole
+# archive is in. The free-space check before the download covers the usual case.
+fetch_resumable() {
+    local url="$1"
+    local total="$2"
+    local ctl="$3"
+    local offset=0
+    local attempt=0
+    local delay="$RESUME_DELAY"
+    local last_progress
+    local rc code got
+    last_progress=$(date +%s)
+
+    while (( offset < total )); do
+        if (( attempt > 0 )); then
+            if (( $(date +%s) - last_progress >= NO_PROGRESS_SECONDS )); then
+                echo_error "No progress for ${NO_PROGRESS_SECONDS}s at byte ${offset} of ${total}; giving up." >&2
+                return 1
+            fi
+            echo_warning "Connection dropped. Resuming at byte ${offset} of ${total}..." >&2
+            sleep "$delay"
+        fi
+        attempt=$(( attempt + 1 ))
+
+        # Body to fd 3 (the pipeline), transfer stats to a file: works with any curl.
+        rc=0
+        curl --silent --show-error --fail --globoff \
+             --connect-timeout 30 --speed-limit 1024 --speed-time "$STALL_SECONDS" \
+             --range "${offset}-$(( total - 1 ))" \
+             --output /dev/fd/3 --write-out '%{http_code} %{size_download}' \
+             "$url" 3>&1 >"$ctl/curl.out" 2>"$ctl/curl.err" || rc=$?
+        code=000; got=0
+        read -r code got < "$ctl/curl.out" || true
+        cat "$ctl/curl.err" >&2
+
+        if [[ "$code" == 5* ]]; then
+            :   # server-side trouble: retry
+        elif (( offset > 0 )) && [[ "$code" != 206 && "$code" != 000 ]]; then
+            # Anything but 206 to a resumed request restarts the body at byte 0.
+            echo_error "The server did not resume at byte ${offset} (HTTP ${code})." >&2
+            return 1
+        fi
+        case "$rc" in
+            0|6|7|16|18|28|35|52|55|56|92) ;;   # done, or a transient network failure
+            22)
+                if [[ "$code" != 5* ]]; then
+                    echo_error "Download failed: HTTP ${code}." >&2
+                    return 1
+                fi ;;
+            23)
+                echo_error "Writing the download failed (is the disk full?)." >&2
+                return 1 ;;
+            *)
+                echo_error "Download failed (curl error ${rc})." >&2
+                return 1 ;;
+        esac
+
+        offset=$(( offset + got ))
+        if (( got > 0 )); then
+            last_progress=$(date +%s)
+            delay="$RESUME_DELAY"
+        else
+            delay=$(( delay * 2 ))
+            (( delay > 60 )) && delay=60
+            (( delay < 1 && RESUME_DELAY > 0 )) && delay=1
+        fi
+    done
+    return 0
+}
+
+# kill_tree PID: stop a process and everything it started (needs pgrep).
+kill_tree() {
+    local child
+    for child in $(pgrep -P "$1" 2>/dev/null); do
+        kill_tree "$child"
+    done
+    kill "$1" 2>/dev/null || true
+}
+
+# check_contents STAGING: only the four snapshot folders, as real directories,
+# holding only regular files and directories, nothing setuid or setgid.
+# Permissions are normalised first: a directory the user cannot read (an
+# archive can set mode 0300) would otherwise hide its contents from find.
+check_contents() {
+    local staging="$1"
+    local name bad
+
+    chmod -R u+rwX,go-w "$staging" || return 1
+    while IFS= read -r name; do
+        case " ${SNAPSHOT_FOLDERS[*]} " in
+            *" $name "*) ;;
+            *) return 1 ;;
+        esac
+        if [ -L "$staging/$name" ] || [ ! -d "$staging/$name" ]; then
+            return 1
+        fi
+    done < <(find "$staging" -mindepth 1 -maxdepth 1 -printf '%f\n')
+    [ -d "$staging/blocks" ] && [ -d "$staging/chainstate" ] || return 1
+    bad=$(find "$staging" \( \( ! -type f ! -type d \) -o -perm /6000 \) -print -quit) || return 1
+    [ -z "$bad" ]
+}
+
+# remove_dir DIR: rm -rf that also works when an archive left a directory the
+# user cannot write into (e.g. mode 0300).
+remove_dir() {
+    [ -e "$1" ] || [ -L "$1" ] || return 0
+    rm -rf "$1" 2>/dev/null && return 0
+    chmod -R u+rwX "$1" 2>/dev/null
+    rm -rf "$1"
+}
+
+# prepare_data_dir DATA_DIR NETWORK: clear leftovers of an interrupted run.
+# .snapshot-staging is always disposable. .snapshot-previous holds the data a
+# swap moved aside, the network it was for (.network) and markers recording
+# how far the swap got, so a recovery never mixes old and new folders and
+# restores into DATA_DIR's directory for that network. A recorded network that
+# is not known is refused. If anything fails, .snapshot-previous is kept for a
+# later run or manual recovery.
+prepare_data_dir() {
+    local data_dir="$1"
+    local network="$2"
+    local target prev d
+    prev="${data_dir}/.snapshot-previous"
+
+    if ! remove_dir "${data_dir:?}/.snapshot-staging"; then
+        echo_error "Could not remove ${data_dir}/.snapshot-staging." >&2
+        return 1
+    fi
+    [ -d "$prev" ] || return 0
+
+    local recorded="$network"
+    [ -s "$prev/.network" ] && recorded=$(head -n 1 "$prev/.network")
+    case "$recorded" in
+        mainnet|testnet|regtest) ;;
+        *)
+            echo_error "${prev} records an unknown network; recover it by hand." >&2
+            return 1 ;;
+    esac
+    target=$(network_dir "$data_dir" "$recorded")
+
+    if [ -e "$prev/.complete" ]; then
+        :   # the new snapshot is fully in place; the old copy can go
+    elif [ -e "$prev/.moving-in" ]; then
+        echo_warning "A previous snapshot swap into ${target} was interrupted; restoring the old data." >&2
+        mkdir -p "$target" || return 1
+        for d in "${SNAPSHOT_FOLDERS[@]}"; do
+            if ! rm -rf "${target:?}/$d"; then
+                echo_error "Could not remove ${target}/${d}; old data kept in ${prev}." >&2
+                return 1
+            fi
+            if [ -e "$prev/$d" ] && ! mv -T "$prev/$d" "$target/$d"; then
+                echo_error "Could not restore ${d}; old data kept in ${prev}." >&2
+                return 1
+            fi
+        done
+    else
+        echo_warning "A previous snapshot swap into ${target} was interrupted; restoring the old data." >&2
+        mkdir -p "$target" || return 1
+        for d in "${SNAPSHOT_FOLDERS[@]}"; do
+            if [ -e "$prev/$d" ] && [ ! -e "$target/$d" ] && ! mv -T "$prev/$d" "$target/$d"; then
+                echo_error "Could not restore ${d}; old data kept in ${prev}." >&2
+                return 1
+            fi
+        done
+    fi
+    remove_dir "$prev"
+}
+
+# swap_in STAGING TARGET DATA_DIR NETWORK: replace all four folders with the
+# verified ones. Old folders are moved aside first; any failure puts them back.
+# On success the replaced data stays in .snapshot-previous, marked complete; the
+# caller deletes it once signals are handled again (it can be ~600GB).
+swap_in() {
+    local staging="$1"
+    local target="$2"
+    local data_dir="$3"
+    local network="$4"
+    local prev="${data_dir}/.snapshot-previous"
+    local d
+
+    remove_dir "$prev" && mkdir -p "$prev" && echo "$network" > "$prev/.network" || return 1
+    for d in "${SNAPSHOT_FOLDERS[@]}"; do
+        if [ -e "$target/$d" ] || [ -L "$target/$d" ]; then
+            if ! mv "$target/$d" "$prev/$d"; then
+                echo_error "Could not move the old ${d} aside; restoring the old data."
+                prepare_data_dir "$data_dir" "$network"
+                return 1
+            fi
+        fi
+    done
+    if ! touch "$prev/.moving-in"; then
+        prepare_data_dir "$data_dir" "$network"
+        return 1
+    fi
+    for d in "${SNAPSHOT_FOLDERS[@]}"; do
+        if [ -d "$staging/$d" ]; then
+            if [ -e "$target/$d" ] || ! mv "$staging/$d" "$target/$d"; then
+                echo_error "Could not move the new ${d} into place; restoring the old data."
+                prepare_data_dir "$data_dir" "$network"
+                return 1
+            fi
+        fi
+    done
+    # Mark complete before removing the old copy, so an interruption from here
+    # on keeps the new data.
+    rm -f "$prev/.moving-in"
+    touch "$prev/.complete"
+    return 0
+}
+
+# State for the INT/TERM handler of sync_snapshot.
+SNAP_STAGING=""
+SNAP_CTL=""
+SNAP_PIDS=()
+
+snapshot_cleanup() {
+    local pid
+    for pid in "${SNAP_PIDS[@]}"; do
+        kill_tree "$pid"
+    done
+    SNAP_PIDS=()
+    [ -n "$SNAP_STAGING" ] && remove_dir "$SNAP_STAGING"
+    [ -n "$SNAP_CTL" ] && rm -rf "$SNAP_CTL"
+    SNAP_STAGING=""
+    SNAP_CTL=""
+}
+
+snapshot_interrupted() {
+    trap - INT TERM
+    snapshot_cleanup
+    echo "" >&2
+    echo_error "Snapshot sync interrupted; nothing was changed." >&2
+    exit 130
+}
+
+# Streams the archive once: curl | tee (into sha256sum) | gunzip | tar. It
+# unpacks into a staging directory and only replaces the node's folders after
+# the checksum matches and the content checks out, so a failed, interrupted or
+# corrupt download leaves the data as it was.
 sync_snapshot() {
     local network="$1"
     local data_dir="$2"
 
-    # Check if rclone is available, install if needed (before using it)
-    if ! command -v rclone &> /dev/null; then
-        if ! install_rclone; then
-            echo_error "Cannot proceed without rclone."
-            return 1
-        fi
-    fi
-
-    # Get the latest snapshot height (now that rclone is available)
-    local snapshot_height
-    if ! snapshot_height=$(get_latest_snapshot_height "$network"); then
-        echo_error "Cannot determine latest snapshot height"
+    if ! fetch_latest_info "$network"; then
+        echo_error "Cannot determine the latest snapshot"
         return 1
     fi
 
-    local base_url="${SNAPSHOT_BASE_URL}/${network}/${snapshot_height}/"
+    local target_dir
+    target_dir=$(network_dir "$data_dir" "$network")
+    local url="${SNAPSHOT_BASE_URL}/${network}/${SNAP_HEIGHT}/${SNAP_FILE}"
+    local staging="${data_dir}/.snapshot-staging"
+    local size_gb=$(( 10#${SNAP_BYTES} / 1000000000 ))
 
-    echo_info "Syncing ${network} snapshot from: ${base_url}"
-    echo_info "Snapshot height: ${snapshot_height}"
-    echo_info "Destination: ${data_dir}"
-    echo_warning "This may take several hours depending on your connection speed."
+    echo_info "Downloading ${network} snapshot: ${url}"
+    echo_info "Snapshot height: ${SNAP_HEIGHT}, download size: ~${size_gb}GB"
+    echo_info "Destination: ${target_dir}"
+    echo_warning "This may take a while depending on your connection speed."
     echo ""
 
-    # Determine if this is an update
     if check_existing_data "$data_dir" "$network"; then
-        echo_info "Updating existing blockchain data..."
+        echo_info "The existing data stays in place until the new snapshot is verified."
     else
         echo_info "Performing initial blockchain sync..."
     fi
 
-    echo_info "Starting rclone sync with progress display..."
-    echo_info "Source: ${base_url}"
-    echo ""
+    prepare_data_dir "$data_dir" "$network" || return 1
 
-    # Use rclone sync with HTTP backend
-    # Use --http-url parameter with :http: remote
+    local unpack="gzip -dc"
+    command -v pigz &> /dev/null && unpack="pigz -dc"
 
-    if ! rclone sync ":http:" "${data_dir}" \
-                    --http-url "${base_url}" \
-                    --progress \
-                    --transfers 4 \
-                    --checkers 8 \
-                    --retries 3 \
-                    --low-level-retries 3 \
-                    --timeout 30s \
-                    --contimeout 10s \
-                    --filter "+ blocks/**" \
-                    --filter "+ chainstate/**" \
-                    --filter "+ frozentxos/**" \
-                    --filter "+ merkle/**" \
-                    --filter "+ testnet3/" \
-                    --filter "+ testnet3/blocks/**" \
-                    --filter "+ testnet3/chainstate/**" \
-                    --filter "+ testnet3/frozentxos/**" \
-                    --filter "+ testnet3/merkle/**" \
-                    --filter "- *"; then
-        echo_error "rclone sync failed."
+    # Control files (FIFO, checksum, curl output) live outside the directory
+    # tar writes into, so the archive cannot overwrite them.
+    local ctl
+    if ! ctl=$(mktemp -d) || ! mkfifo "$ctl/sha256.fifo"; then
+        echo_error "Could not create a temporary directory with a FIFO."
+        [ -n "${ctl:-}" ] && rm -rf "$ctl"
         return 1
     fi
+    if ! mkdir -p "$target_dir" || ! mkdir -m 700 "$staging"; then
+        rm -rf "$ctl"
+        return 1
+    fi
+    SNAP_STAGING="$staging"
+    SNAP_CTL="$ctl"
+    SNAP_PIDS=()
+    trap snapshot_interrupted INT TERM
 
-    echo ""
-    echo_success "Snapshot sync completed successfully."
-    return 0
+    sha256sum < "$ctl/sha256.fifo" > "$ctl/sha256" &
+    local sha_pid=$!
+    SNAP_PIDS+=("$sha_pid")
+
+    # Progress: report the unpacked size every minute while it runs.
+    local progress_pid=""
+    if [ -t 1 ]; then
+        ( while sleep 60; do
+              done_bytes=$(du -sb "$staging" 2>/dev/null | cut -f1)
+              echo_info "Unpacked so far: $(( ${done_bytes:-0} / 1000000000 ))GB"
+          done ) &
+        progress_pid=$!
+        SNAP_PIDS+=("$progress_pid")
+    fi
+
+    # Run in the background and wait, so INT/TERM are handled at once.
+    ( set -o pipefail
+      fetch_resumable "$url" "$SNAP_BYTES" "$ctl" \
+        | tee "$ctl/sha256.fifo" \
+        | $unpack \
+        | tar -x --no-same-owner --no-same-permissions -f - -C "$staging" ) &
+    local pipe_pid=$!
+    SNAP_PIDS+=("$pipe_pid")
+    local ok=true
+    wait "$pipe_pid" || ok=false
+
+    [ -n "$progress_pid" ] && kill_tree "$progress_pid"
+    if $ok; then
+        wait "$sha_pid" || ok=false
+    else
+        kill_tree "$sha_pid"
+    fi
+    local got
+    got=$(cut -c1-64 "$ctl/sha256" 2>/dev/null)
+
+    local result=1
+    if ! $ok; then
+        echo_error "Download or extraction failed."
+    elif [[ "$got" != "$SNAP_SHA256" ]]; then
+        echo_error "Checksum mismatch: expected ${SNAP_SHA256}, got ${got:-none}."
+    elif ! check_contents "$staging"; then
+        echo_error "The snapshot has unexpected content; it was not used."
+    else
+        echo_success "Checksum verified."
+        # The swap itself takes milliseconds (renames only); letting INT/TERM
+        # interrupt it halfway would leave the recovery to the next run.
+        trap '' INT TERM
+        if swap_in "$staging" "$target_dir" "$data_dir" "$network"; then
+            result=0
+        fi
+    fi
+
+    trap - INT TERM
+    snapshot_cleanup
+    if (( result == 0 )); then
+        # The replaced data is marked complete, so an interruption here is safe.
+        echo_info "Removing the replaced blockchain data..."
+        remove_dir "${data_dir}/.snapshot-previous" \
+            || echo_warning "Could not remove ${data_dir}/.snapshot-previous; it holds the replaced data and can be deleted."
+        echo ""
+        echo_success "Snapshot download completed successfully."
+    fi
+    return $result
 }
-
-# rclone handles orphan cleanup automatically with sync command
-# No separate cleanup function needed
 
 verify_sync() {
     local data_dir="$1"
@@ -239,14 +514,12 @@ verify_sync() {
 
     echo_info "Verifying synced data..."
 
-    # Check for essential directories
-    local target_dir="$data_dir"
-    if [[ "$network" == "testnet" ]]; then
-        target_dir="$data_dir/testnet3"
-    elif [[ "$network" == "regtest" ]]; then
+    if [[ "$network" == "regtest" ]]; then
         echo_info "Regtest doesn't use snapshots."
         return 0
     fi
+    local target_dir
+    target_dir=$(network_dir "$data_dir" "$network")
 
     local required_dirs=("blocks" "chainstate")
     local missing_dirs=()
@@ -278,12 +551,11 @@ main() {
         return 0
     fi
 
-    # Check if snapshot is available for the network
-    local snapshot_url="${SNAPSHOT_BASE_URL}/${NETWORK}/"
     local snapshot_size="${SNAPSHOT_SIZES[$NETWORK]:-Unknown}"
 
     echo_info "Network: $NETWORK"
-    echo_info "Estimated snapshot size: $snapshot_size"
+    echo_info "Source: ${SNAPSHOT_BASE_URL}/${NETWORK}/"
+    echo_info "Estimated size once unpacked: $snapshot_size"
     echo_info "Target directory: $DATA_DIR"
     echo ""
 
@@ -299,14 +571,22 @@ main() {
         return 0
     fi
 
-    # Check disk space
-    local required_space=200  # GB for mainnet
-    [[ "$NETWORK" == "testnet" ]] && required_space=30  # GB for testnet (full node)
+    # Check disk space (the archive is unpacked as it streams, so only the
+    # unpacked size is needed)
+    local required_space="${SNAPSHOT_SPACE_GB[$NETWORK]:-650}"
+
+    # Leftovers of an interrupted run would otherwise count against free space.
+    prepare_data_dir "$DATA_DIR" "$NETWORK" || true
 
     echo_info "Checking disk space requirements..."
 
     if ! check_disk_space "$required_space"; then
         echo_error "Insufficient disk space for snapshot."
+        if check_existing_data "$DATA_DIR" "$NETWORK" >/dev/null; then
+            echo_info "The existing blockchain data is kept until the new snapshot is verified,"
+            echo_info "so a refresh needs room for a second copy (${required_space}GB free)."
+            echo_info "To refresh in place, stop the node and remove blocks/ and chainstate/ first."
+        fi
         return 1
     fi
 
@@ -314,7 +594,11 @@ main() {
     echo ""
     if ! sync_snapshot "$NETWORK" "$DATA_DIR"; then
         echo_error "Failed to sync snapshot."
-        echo_info "The node will sync from the genesis block instead."
+        if check_existing_data "$DATA_DIR" "$NETWORK" >/dev/null; then
+            echo_info "Your existing blockchain data is unchanged."
+        else
+            echo_info "The node will sync from the genesis block instead."
+        fi
         return 0
     fi
 

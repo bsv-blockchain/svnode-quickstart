@@ -60,13 +60,23 @@ cd svnode-quickstart
 
 ### Sync Methods
 
-- **Snapshot Sync**: Downloads pruned blockchain data via HTTP using wget (recommended)
-    - Source: https://svnode-snapshots.bsvb.tech/ (provided as-is by the BSV Association)
+- **Snapshot Sync**: Downloads a pruned blockchain snapshot (recommended)
+    - Source: https://bsva-svnode-snapshots.s3.gra.io.cloud.ovh.net/ (public, S3-compatible object storage, provided
+      as-is by the BSV Association). `<network>/latest.json` names the newest snapshot.
     - Both mainnet and testnet snapshots are pruned (contain recent blockchain data only)
-    - Incremental updates: Only downloads new files on subsequent syncs
-    - Resume support: Continues from where it left off if interrupted
-    - Mainnet: ~160GB of pruned blockchain data
-    - Testnet: ~30GB of pruned blockchain data
+    - One `.tar.gz` per snapshot, streamed and unpacked on the fly, so the archive never sits on disk
+    - Checked against the SHA-256 published next to it before your data is touched. This catches corrupt and
+      truncated downloads; it is not a signature, since the checksum comes from the same host as the archive.
+    - Unpacked into a staging folder; only `blocks`, `chainstate`, `frozentxos` and `merkle` are accepted, without
+      the archive's owners or setuid bits. Existing data is replaced only after all checks pass, and a failed,
+      interrupted or corrupt download leaves it as it was.
+    - A dropped or stalled connection resumes where it stopped (HTTP range requests) as long as it keeps making
+      progress.
+    - Refreshing a node that already has data needs room for a second copy, because the old data is kept until the
+      new snapshot is verified. To refresh in place, stop the node and remove `blocks/` and `chainstate/` first.
+    - Mainnet: ~210GB download, ~600GB once unpacked (refreshed daily)
+    - Testnet: ~13GB download, ~30GB once unpacked (refreshed occasionally)
+    - Uses `curl` and `tar`; `pigz` is used for faster unpacking when installed
 
   **Note on Pruned Snapshots**: Pruned snapshots contain all unspent transaction outputs (UTXOs) but have removed
   historical spent transaction data from old blocks. This preserves your node's ability to validate new transactions and
@@ -112,7 +122,7 @@ Default installation paths (in the script directory):
 
 - **Installation Directory**: `./bsv/`
 - **Data Directory**: `./bsv-data/`
-- **Downloads Directory**: `./downloads/` (temporary files, snapshots)
+- **Downloads Directory**: `./downloads/` (temporary files; snapshots are streamed straight into the data directory)
 - **Configuration File**: `./bsv-data/bitcoin.conf`
 - **Log Files**:
     - **Mainnet**: `./bsv-data/bitcoind.log`
@@ -298,7 +308,7 @@ bandwidth, and security considerations.
 
 ### Snapshot Trust and Security Considerations
 
-The blockchain snapshots available at https://svnode-snapshots.bsvb.tech/ are provided as-is by the BSV Association.
+The blockchain snapshots available at https://bsva-svnode-snapshots.s3.gra.io.cloud.ovh.net/ are provided as-is by the BSV Association.
 While these snapshots can significantly speed up initial node setup, it's critical to understand the security
 implications before using them in different environments.
 
@@ -337,4 +347,4 @@ implications before using them in different environments.
 - Use `./cli.sh verifychain` for additional validation
 - Monitor synchronization status and network consensus alignment
 
-**Validation**: SV Node automatically validates loaded snapshot data on startup, verifying block headers, chain integrity, and the UTXO set. The network consensus mechanism provides ongoing protection against invalid data.
+**Validation**: On startup SV Node verifies the most recent blocks of the loaded data (the last 6 by default); it does not re-validate the whole UTXO set. The network consensus mechanism provides ongoing protection against invalid data.

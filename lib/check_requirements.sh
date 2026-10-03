@@ -124,7 +124,7 @@ check_dependencies() {
     local missing_deps=()
 
     # Check for required commands
-    local commands=("curl" "tar" "sha256sum" "openssl")
+    local commands=("curl" "tar" "sha256sum" "openssl" "pgrep")
 
     for cmd in "${commands[@]}"; do
         if ! command -v "$cmd" &> /dev/null; then
@@ -135,15 +135,11 @@ check_dependencies() {
         fi
     done
 
-    # Check for rclone (required for snapshots)
-    local rclone_missing=false
-    if command -v rclone &> /dev/null; then
-        echo_success "Found: rclone (required for snapshots)"
+    # pigz is optional: snapshots unpack with gzip, faster with pigz
+    if command -v pigz &> /dev/null; then
+        echo_success "Found: pigz (faster snapshot unpacking)"
     else
-        echo_warning "Missing: rclone"
-        echo_warning "  rclone is required for blockchain snapshot sync"
-        echo_info "  you will be prompted to install it if you choose snapshots"
-        rclone_missing=true
+        echo_info "Optional: pigz not found; snapshots unpack with gzip instead"
     fi
 
     # Check for sudo/su access
@@ -181,12 +177,7 @@ check_dependencies() {
 
         return 1
     else
-        if [ "$rclone_missing" = true ]; then
-            echo_success "Core dependencies are installed."
-            echo_info "Note: rclone will be installed automatically if you choose snapshot sync."
-        else
-            echo_success "All required dependencies are installed."
-        fi
+        echo_success "All required dependencies are installed."
     fi
 
     return 0
