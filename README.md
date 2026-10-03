@@ -122,7 +122,7 @@ Default installation paths (in the script directory):
 
 - **Installation Directory**: `./bsv/`
 - **Data Directory**: `./bsv-data/`
-- **Downloads Directory**: `./downloads/` (temporary files, snapshots)
+- **Downloads Directory**: `./downloads/` (temporary files; snapshots are streamed straight into the data directory)
 - **Configuration File**: `./bsv-data/bitcoin.conf`
 - **Log Files**:
     - **Mainnet**: `./bsv-data/bitcoind.log`

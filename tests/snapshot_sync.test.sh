@@ -72,6 +72,9 @@ with tarfile.open(out, "w:gz") as t:
         add(t, "blocks/run", b"#!/bin/sh\n", mode=0o4755)
     if kind == "owner":
         add(t, "blocks/owned", b"x", uid=4242, gid=4242, mode=0o644)
+    if kind == "hidden":
+        add(t, "frozentxos", type=tarfile.DIRTYPE, mode=0o300)
+        add(t, "frozentxos/blk00001.dat", type=tarfile.SYMTYPE, linkname="../../target-of-symlink")
 PY
 }
 
@@ -255,5 +258,66 @@ mkdir -p "$D/.snapshot-previous"; command mv "$D/chainstate" "$D/.snapshot-previ
 prepare_data_dir "$D" mainnet >/dev/null 2>&1
 expect "20 restored" "$(cat "$D/chainstate/data" 2>/dev/null)" '^old$'
 expect "20 cleared" "$(no_staging "$D")" '^0$'
+
+# 21. as a normal user, a directory the user cannot read must not hide a symlink
+evil hidden; place mainnet 970600 "$T/evil.tar.gz"
+D=/tmp/d21; rm -rf "$D"; mkdir -p "$D"; chown nobody "$D"
+out=$(runuser -u nobody -- env SNAPSHOT_BASE_URL="$SNAPSHOT_BASE_URL" RESUME_DELAY=0 \
+      bash -c 'source /w/lib/snapshot_sync.sh x /tmp >/dev/null; set +e; sync_snapshot mainnet /tmp/d21' 2>&1); rc=$?
+expect "21 rc" "$rc" '^1$'
+expect "21 message" "$out" 'unexpected content'
+expect "21 no symlink" "$(find "$D" -type l | wc -l | tr -d ' ')" '^0$'
+rm -rf "$D"
+
+# 22. a server outage of a few seconds is ridden out
+place mainnet 970000 "$T/big.tar.gz"
+start_server SLOW=60000
+D="$T/d22"; mkdir -p "$D"
+bash -c 'source /w/lib/snapshot_sync.sh x /tmp >/dev/null; set +e; sync_snapshot mainnet "$1"' _ "$D" >"$T/22.log" 2>&1 &
+pid=$!; sleep 1.5; kill "$SERVER"; wait "$SERVER" 2>/dev/null; SERVER=""; sleep 4; start_server
+wait "$pid"; rc=$?
+expect "22 rc" "$rc" '^0$'
+expect "22 resumed" "$(cat "$T/22.log")" 'Resuming at byte'
+expect "22 content" "$(cmp -s "$src/blocks/blk00000.dat" "$D/blocks/blk00000.dat" && echo same)" '^same$'
+
+# 23. DNS failures are retried, and it gives up only after the no-progress limit
+ctl=$(mktemp -d)
+s=$(date +%s); out=$(NO_PROGRESS_SECONDS=3 fetch_resumable http://nonexistent.invalid/x 100 "$ctl" 2>&1 >/dev/null); rc=$?
+expect "23 rc" "$rc" '^1$'
+expect "23 retried" "$(grep -c 'Resuming' <<<"$out")" '^[1-9][0-9]*$'
+expect "23 gave up" "$out" 'No progress for'
+rm -rf "$ctl"
+
+# 24. a 5xx answer to a resume request is retried
+start_server DROP_AFTER=100000 DROP_TIMES=1 ERROR_ON_RESUME=2
+D="$T/d24"; mkdir -p "$D"
+sync_snapshot mainnet "$D" >/dev/null 2>&1; rc=$?
+expect "24 rc" "$rc" '^0$'
+
+# 25. recovery after a swap interrupted while moving the new folders in: back to the old set
+D="$T/d25"; existing "$D"; P="$D/.snapshot-previous"; mkdir -p "$P"
+for x in blocks chainstate frozentxos merkle; do command mv "$D/$x" "$P/$x"; done
+echo "$D" > "$P/.target"; touch "$P/.moving-in"
+mkdir -p "$D/blocks"; echo new > "$D/blocks/data"
+prepare_data_dir "$D" mainnet >/dev/null 2>&1; rc=$?
+expect "25 rc" "$rc" '^0$'
+expect "25 old set" "$(cat "$D/blocks/data" "$D/chainstate/data" | tr '\n' ' ')" '^old old $'
+expect "25 no nesting" "$( [ -e "$D/blocks/blocks" ] && echo nested || echo flat)" '^flat$'
+expect "25 cleared" "$(no_staging "$D")" '^0$'
+
+# 26. a swap that completed but was not cleaned up keeps the new data
+D="$T/d26"; mkdir -p "$D/blocks" "$D/.snapshot-previous/blocks"
+echo new > "$D/blocks/data"; echo old > "$D/.snapshot-previous/blocks/data"
+echo "$D" > "$D/.snapshot-previous/.target"; touch "$D/.snapshot-previous/.complete"
+prepare_data_dir "$D" mainnet >/dev/null 2>&1
+expect "26 kept new" "$(cat "$D/blocks/data")" '^new$'
+expect "26 cleared" "$(no_staging "$D")" '^0$'
+
+# 27. recovery uses the target recorded by the interrupted swap, not the current network
+D="$T/d27"; existing "$D"; existing "$D/testnet3"; echo testnet > "$D/testnet3/blocks/data"
+P="$D/.snapshot-previous"; mkdir -p "$P"; command mv "$D/chainstate" "$P/chainstate"; echo "$D" > "$P/.target"
+prepare_data_dir "$D" testnet >/dev/null 2>&1
+expect "27 mainnet restored" "$(cat "$D/chainstate/data" 2>/dev/null)" '^old$'
+expect "27 testnet untouched" "$(cat "$D/testnet3/blocks/data") $(ls "$D/testnet3" | tr '\n' ' ')" '^testnet blocks chainstate frozentxos merkle $'
 
 kill "$SERVER" 2>/dev/null; rm -rf "$T"; exit $fail

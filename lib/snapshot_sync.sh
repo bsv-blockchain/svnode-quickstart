@@ -141,30 +141,41 @@ fetch_latest_info() {
 SNAPSHOT_FOLDERS=(blocks chainstate frozentxos merkle)
 
 # Download tuning; overridable for tests.
-RESUME_DELAY="${RESUME_DELAY:-2}"                 # seconds between resume attempts
+RESUME_DELAY="${RESUME_DELAY:-2}"                 # first pause before a resume; doubles up to 60s
 STALL_SECONDS="${STALL_SECONDS:-60}"              # below 1KB/s for this long = stalled
-MAX_TRIES_WITHOUT_PROGRESS="${MAX_TRIES_WITHOUT_PROGRESS:-5}"
+NO_PROGRESS_SECONDS="${NO_PROGRESS_SECONDS:-900}" # give up after this long without a byte
 
 # fetch_resumable URL TOTAL_BYTES CTL_DIR: writes the object to stdout. When a
-# connection drops or stalls mid-download it continues with an HTTP Range
-# request from the last byte received, so one long stream survives network
-# hiccups. Bytes are only ever appended in order, a resumed response must be
-# 206, and the checksum over the whole stream catches anything that still goes
-# wrong. Errors that a retry cannot fix (HTTP 4xx, a failed write because the
-# unpacking side died, e.g. a full disk) stop at once.
+# connection drops, stalls or the host is briefly unreachable, it continues
+# with an HTTP Range request from the last byte received, so one long stream
+# survives network trouble; it gives up after NO_PROGRESS_SECONDS without a
+# byte. Bytes are only ever appended in order, a resumed response must be 206
+# (checked once the response is in; a server ignoring Range is refused and the
+# checksum fails the stream), and the checksum over the whole stream catches
+# anything that still goes wrong. Errors that a retry cannot fix (HTTP 4xx, a
+# failed write because the unpacking side died, e.g. a full disk) stop at once.
 fetch_resumable() {
     local url="$1"
     local total="$2"
     local ctl="$3"
     local offset=0
-    local stuck=0
+    local attempt=0
+    local delay="$RESUME_DELAY"
+    local last_progress
     local rc code got
+    last_progress=$(date +%s)
 
     while (( offset < total )); do
-        if (( offset > 0 || stuck > 0 )); then
+        if (( attempt > 0 )); then
+            if (( $(date +%s) - last_progress >= NO_PROGRESS_SECONDS )); then
+                echo_error "No progress for ${NO_PROGRESS_SECONDS}s at byte ${offset} of ${total}; giving up." >&2
+                return 1
+            fi
             echo_warning "Connection dropped. Resuming at byte ${offset} of ${total}..." >&2
-            sleep "$RESUME_DELAY"
+            sleep "$delay"
         fi
+        attempt=$(( attempt + 1 ))
+
         # Body to fd 3 (the pipeline), transfer stats to a file: works with any curl.
         rc=0
         curl --silent --show-error --fail --globoff \
@@ -176,14 +187,15 @@ fetch_resumable() {
         read -r code got < "$ctl/curl.out" || true
         cat "$ctl/curl.err" >&2
 
-        # A resumed request answered with anything but 206 would restart the
-        # body from byte 0 and corrupt the stream.
-        if (( offset > 0 )) && [[ "$code" != 206 && "$code" != 000 ]]; then
+        if [[ "$code" == 5* ]]; then
+            :   # server-side trouble: retry
+        elif (( offset > 0 )) && [[ "$code" != 206 && "$code" != 000 ]]; then
+            # Anything but 206 to a resumed request restarts the body at byte 0.
             echo_error "The server did not resume at byte ${offset} (HTTP ${code})." >&2
             return 1
         fi
         case "$rc" in
-            0|7|18|28|35|52|55|56|92) ;;   # done, or a transient network failure
+            0|6|7|16|18|28|35|52|55|56|92) ;;   # done, or a transient network failure
             22)
                 if [[ "$code" != 5* ]]; then
                     echo_error "Download failed: HTTP ${code}." >&2
@@ -199,19 +211,18 @@ fetch_resumable() {
 
         offset=$(( offset + got ))
         if (( got > 0 )); then
-            stuck=0
+            last_progress=$(date +%s)
+            delay="$RESUME_DELAY"
         else
-            stuck=$(( stuck + 1 ))
-            if (( stuck >= MAX_TRIES_WITHOUT_PROGRESS )); then
-                echo_error "No progress after ${stuck} attempts at byte ${offset} of ${total}." >&2
-                return 1
-            fi
+            delay=$(( delay * 2 ))
+            (( delay > 60 )) && delay=60
+            (( delay < 1 && RESUME_DELAY > 0 )) && delay=1
         fi
     done
     return 0
 }
 
-# kill_tree PID: stop a process and everything it started.
+# kill_tree PID: stop a process and everything it started (needs pgrep).
 kill_tree() {
     local child
     for child in $(pgrep -P "$1" 2>/dev/null); do
@@ -222,90 +233,112 @@ kill_tree() {
 
 # check_contents STAGING: only the four snapshot folders, as real directories,
 # holding only regular files and directories, nothing setuid or setgid.
+# Permissions are normalised first: a directory the user cannot read (an
+# archive can set mode 0300) would otherwise hide its contents from find.
 check_contents() {
     local staging="$1"
-    local entry name
-    shopt -s dotglob nullglob
-    for entry in "$staging"/*; do
-        name=$(basename "$entry")
+    local name bad
+
+    chmod -R u+rwX,go-w "$staging" || return 1
+    while IFS= read -r name; do
         case " ${SNAPSHOT_FOLDERS[*]} " in
             *" $name "*) ;;
-            *) shopt -u dotglob nullglob; return 1 ;;
+            *) return 1 ;;
         esac
-        if [ -L "$entry" ] || [ ! -d "$entry" ]; then
-            shopt -u dotglob nullglob
+        if [ -L "$staging/$name" ] || [ ! -d "$staging/$name" ]; then
             return 1
         fi
-    done
-    shopt -u dotglob nullglob
+    done < <(find "$staging" -mindepth 1 -maxdepth 1 -printf '%f\n')
     [ -d "$staging/blocks" ] && [ -d "$staging/chainstate" ] || return 1
-    [ -z "$(find "$staging" \( \( ! -type f ! -type d \) -o -perm /6000 \) -print -quit)" ]
+    bad=$(find "$staging" \( \( ! -type f ! -type d \) -o -perm /6000 \) -print -quit) || return 1
+    [ -z "$bad" ]
 }
 
 # prepare_data_dir DATA_DIR NETWORK: clear leftovers of an interrupted run.
 # .snapshot-staging is always disposable. .snapshot-previous holds the data a
-# swap moved aside; markers record how far the swap got, so a recovery never
-# mixes old and new folders.
+# swap moved aside, the target it came from (.target), and markers recording
+# how far the swap got, so a recovery never mixes old and new folders and
+# always restores into the directory the swap was working on. If anything
+# fails, .snapshot-previous is kept for a later run or manual recovery.
 prepare_data_dir() {
     local data_dir="$1"
     local network="$2"
     local target prev d
-    target=$(network_dir "$data_dir" "$network")
     prev="${data_dir}/.snapshot-previous"
 
-    rm -rf "${data_dir:?}/.snapshot-staging"
+    if ! rm -rf "${data_dir:?}/.snapshot-staging"; then
+        echo_error "Could not remove ${data_dir}/.snapshot-staging." >&2
+        return 1
+    fi
     [ -d "$prev" ] || return 0
+
+    target=$(network_dir "$data_dir" "$network")
+    [ -s "$prev/.target" ] && target=$(cat "$prev/.target")
 
     if [ -e "$prev/.complete" ]; then
         :   # the new snapshot is fully in place; the old copy can go
     elif [ -e "$prev/.moving-in" ]; then
-        echo_warning "A previous snapshot swap was interrupted; restoring the old data." >&2
-        mkdir -p "$target"
+        echo_warning "A previous snapshot swap into ${target} was interrupted; restoring the old data." >&2
+        mkdir -p "$target" || return 1
         for d in "${SNAPSHOT_FOLDERS[@]}"; do
-            rm -rf "${target:?}/$d"
-            if [ -e "$prev/$d" ]; then
-                mv "$prev/$d" "$target/$d" || return 1
+            if ! rm -rf "${target:?}/$d"; then
+                echo_error "Could not remove ${target}/${d}; old data kept in ${prev}." >&2
+                return 1
+            fi
+            if [ -e "$prev/$d" ] && ! mv -T "$prev/$d" "$target/$d"; then
+                echo_error "Could not restore ${d}; old data kept in ${prev}." >&2
+                return 1
             fi
         done
     else
-        echo_warning "A previous snapshot swap was interrupted; restoring the old data." >&2
-        mkdir -p "$target"
+        echo_warning "A previous snapshot swap into ${target} was interrupted; restoring the old data." >&2
+        mkdir -p "$target" || return 1
         for d in "${SNAPSHOT_FOLDERS[@]}"; do
-            if [ -e "$prev/$d" ] && [ ! -e "$target/$d" ]; then
-                mv "$prev/$d" "$target/$d" || return 1
+            if [ -e "$prev/$d" ] && [ ! -e "$target/$d" ] && ! mv -T "$prev/$d" "$target/$d"; then
+                echo_error "Could not restore ${d}; old data kept in ${prev}." >&2
+                return 1
             fi
         done
     fi
     rm -rf "$prev"
 }
 
-# swap_in STAGING TARGET DATA_DIR: replace all four folders with the verified
-# ones. Old folders are moved aside first; any failure puts them back.
+# swap_in STAGING TARGET DATA_DIR NETWORK: replace all four folders with the
+# verified ones. Old folders are moved aside first; any failure puts them back.
 swap_in() {
     local staging="$1"
     local target="$2"
-    local prev="${3}/.snapshot-previous"
+    local data_dir="$3"
+    local network="$4"
+    local prev="${data_dir}/.snapshot-previous"
     local d
 
-    rm -rf "$prev" && mkdir -p "$prev" || return 1
+    rm -rf "$prev" && mkdir -p "$prev" && echo "$target" > "$prev/.target" || return 1
     for d in "${SNAPSHOT_FOLDERS[@]}"; do
         if [ -e "$target/$d" ] || [ -L "$target/$d" ]; then
             if ! mv "$target/$d" "$prev/$d"; then
-                prepare_data_dir "$3" "$SWAP_NETWORK"
+                echo_error "Could not move the old ${d} aside; restoring the old data."
+                prepare_data_dir "$data_dir" "$network"
                 return 1
             fi
         fi
     done
-    touch "$prev/.moving-in"
+    if ! touch "$prev/.moving-in"; then
+        prepare_data_dir "$data_dir" "$network"
+        return 1
+    fi
     for d in "${SNAPSHOT_FOLDERS[@]}"; do
         if [ -d "$staging/$d" ]; then
-            if ! mv "$staging/$d" "$target/$d"; then
+            if [ -e "$target/$d" ] || ! mv "$staging/$d" "$target/$d"; then
                 echo_error "Could not move the new ${d} into place; restoring the old data."
-                prepare_data_dir "$3" "$SWAP_NETWORK"
+                prepare_data_dir "$data_dir" "$network"
                 return 1
             fi
         fi
     done
+    # Mark complete before removing the old copy, so an interruption from here
+    # on keeps the new data.
+    rm -f "$prev/.moving-in"
     touch "$prev/.complete"
     rm -rf "$prev" || echo_warning "Could not remove ${prev}; it holds the replaced data and can be deleted."
     return 0
@@ -380,7 +413,7 @@ sync_snapshot() {
         [ -n "${ctl:-}" ] && rm -rf "$ctl"
         return 1
     fi
-    if ! mkdir -p "$staging" "$target_dir"; then
+    if ! mkdir -p "$target_dir" || ! mkdir -m 700 "$staging"; then
         rm -rf "$ctl"
         return 1
     fi
@@ -433,8 +466,10 @@ sync_snapshot() {
         echo_error "The snapshot has unexpected content; it was not used."
     else
         echo_success "Checksum verified."
-        SWAP_NETWORK="$network"
-        if swap_in "$staging" "$target_dir" "$data_dir"; then
+        # The swap takes milliseconds; letting INT/TERM interrupt it halfway
+        # would leave the recovery to the next run.
+        trap '' INT TERM
+        if swap_in "$staging" "$target_dir" "$data_dir" "$network"; then
             result=0
         fi
     fi
@@ -534,7 +569,11 @@ main() {
     echo ""
     if ! sync_snapshot "$NETWORK" "$DATA_DIR"; then
         echo_error "Failed to sync snapshot."
-        echo_info "The node will sync from the genesis block instead."
+        if check_existing_data "$DATA_DIR" "$NETWORK" >/dev/null; then
+            echo_info "Your existing blockchain data is unchanged."
+        else
+            echo_info "The node will sync from the genesis block instead."
+        fi
         return 0
     fi
 

@@ -5,6 +5,7 @@ Failure modes for .tar.gz requests, set through the environment:
   STALL_AFTER=N              send N bytes, then stall (once), to exercise timeouts
   IGNORE_RANGE=1             answer every request with 200 and the full body
   SLOW=N                     send at most N bytes per second
+  ERROR_ON_RESUME=K          answer the first K resumed (Range from > 0) requests with 503
 """
 import os
 import sys
@@ -16,6 +17,8 @@ DROP_TIMES = int(os.environ.get("DROP_TIMES", "0"))
 STALL_AFTER = int(os.environ.get("STALL_AFTER", "0"))
 IGNORE_RANGE = os.environ.get("IGNORE_RANGE") == "1"
 SLOW = int(os.environ.get("SLOW", "0"))
+ERROR_ON_RESUME = int(os.environ.get("ERROR_ON_RESUME", "0"))
+errors_sent = [0]
 served = {}
 stalled = set()
 
@@ -41,6 +44,12 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_header("Content-Range", f"bytes */{size}")
                 self.end_headers()
                 return
+        if start > 0 and errors_sent[0] < ERROR_ON_RESUME:
+            errors_sent[0] += 1
+            self.send_response(503)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         n = served.get(path, 0)
         served[path] = n + 1
         self.send_response(206 if partial else 200)

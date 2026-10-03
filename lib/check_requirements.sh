@@ -124,7 +124,7 @@ check_dependencies() {
     local missing_deps=()
 
     # Check for required commands
-    local commands=("curl" "tar" "sha256sum" "openssl")
+    local commands=("curl" "tar" "sha256sum" "openssl" "pgrep")
 
     for cmd in "${commands[@]}"; do
         if ! command -v "$cmd" &> /dev/null; then
