@@ -60,13 +60,16 @@ cd svnode-quickstart
 
 ### Sync Methods
 
-- **Snapshot Sync**: Downloads pruned blockchain data via HTTP using wget (recommended)
-    - Source: https://svnode-snapshots.bsvb.tech/ (provided as-is by the BSV Association)
+- **Snapshot Sync**: Downloads a pruned blockchain snapshot (recommended)
+    - Source: https://bsva-svnode-snapshots.s3.gra.io.cloud.ovh.net/ (public, S3-compatible object storage, provided
+      as-is by the BSV Association). `<network>/latest.json` names the newest snapshot.
     - Both mainnet and testnet snapshots are pruned (contain recent blockchain data only)
-    - Incremental updates: Only downloads new files on subsequent syncs
-    - Resume support: Continues from where it left off if interrupted
-    - Mainnet: ~160GB of pruned blockchain data
-    - Testnet: ~30GB of pruned blockchain data
+    - One `.tar.gz` per snapshot, streamed and unpacked on the fly, so the archive never sits on disk
+    - Verified against its published SHA-256 before your data is touched; a failed or corrupt download leaves existing
+      data as it was. A dropped connection resumes where it stopped (HTTP range requests, up to 10 attempts).
+    - Mainnet: ~210GB download, ~600GB once unpacked (refreshed daily)
+    - Testnet: ~13GB download, ~30GB once unpacked (refreshed occasionally)
+    - Uses `curl` and `tar`; `pigz` is used for faster unpacking when installed
 
   **Note on Pruned Snapshots**: Pruned snapshots contain all unspent transaction outputs (UTXOs) but have removed
   historical spent transaction data from old blocks. This preserves your node's ability to validate new transactions and
@@ -298,7 +301,7 @@ bandwidth, and security considerations.
 
 ### Snapshot Trust and Security Considerations
 
-The blockchain snapshots available at https://svnode-snapshots.bsvb.tech/ are provided as-is by the BSV Association.
+The blockchain snapshots available at https://bsva-svnode-snapshots.s3.gra.io.cloud.ovh.net/ are provided as-is by the BSV Association.
 While these snapshots can significantly speed up initial node setup, it's critical to understand the security
 implications before using them in different environments.
 

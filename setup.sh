@@ -153,9 +153,9 @@ collect_user_preferences() {
                 # Both mainnet and testnet snapshots are pruned
                 NODE_TYPE="pruned"
                 if [[ "$NETWORK" == "mainnet" ]]; then
-                    echo_info "Mainnet snapshot selected - using pruned mode (200GB)"
+                    echo_info "Mainnet snapshot selected - using pruned mode (~600GB once unpacked)"
                 else  # testnet
-                    echo_info "Testnet snapshot selected - using pruned mode (300GB)"
+                    echo_info "Testnet snapshot selected - using pruned mode (~30GB once unpacked)"
                 fi
                 ;;
             1)
