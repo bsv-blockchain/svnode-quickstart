@@ -297,7 +297,7 @@ expect "24 rc" "$rc" '^0$'
 # 25. recovery after a swap interrupted while moving the new folders in: back to the old set
 D="$T/d25"; existing "$D"; P="$D/.snapshot-previous"; mkdir -p "$P"
 for x in blocks chainstate frozentxos merkle; do command mv "$D/$x" "$P/$x"; done
-echo "$D" > "$P/.target"; touch "$P/.moving-in"
+echo mainnet > "$P/.network"; touch "$P/.moving-in"
 mkdir -p "$D/blocks"; echo new > "$D/blocks/data"
 prepare_data_dir "$D" mainnet >/dev/null 2>&1; rc=$?
 expect "25 rc" "$rc" '^0$'
@@ -308,16 +308,41 @@ expect "25 cleared" "$(no_staging "$D")" '^0$'
 # 26. a swap that completed but was not cleaned up keeps the new data
 D="$T/d26"; mkdir -p "$D/blocks" "$D/.snapshot-previous/blocks"
 echo new > "$D/blocks/data"; echo old > "$D/.snapshot-previous/blocks/data"
-echo "$D" > "$D/.snapshot-previous/.target"; touch "$D/.snapshot-previous/.complete"
+echo mainnet > "$D/.snapshot-previous/.network"; touch "$D/.snapshot-previous/.complete"
 prepare_data_dir "$D" mainnet >/dev/null 2>&1
 expect "26 kept new" "$(cat "$D/blocks/data")" '^new$'
 expect "26 cleared" "$(no_staging "$D")" '^0$'
 
-# 27. recovery uses the target recorded by the interrupted swap, not the current network
+# 27. recovery uses the network recorded by the interrupted swap, not the current one
 D="$T/d27"; existing "$D"; existing "$D/testnet3"; echo testnet > "$D/testnet3/blocks/data"
-P="$D/.snapshot-previous"; mkdir -p "$P"; command mv "$D/chainstate" "$P/chainstate"; echo "$D" > "$P/.target"
+P="$D/.snapshot-previous"; mkdir -p "$P"; command mv "$D/chainstate" "$P/chainstate"; echo mainnet > "$P/.network"
 prepare_data_dir "$D" testnet >/dev/null 2>&1
 expect "27 mainnet restored" "$(cat "$D/chainstate/data" 2>/dev/null)" '^old$'
 expect "27 testnet untouched" "$(cat "$D/testnet3/blocks/data") $(ls "$D/testnet3" | tr '\n' ' ')" '^testnet blocks chainstate frozentxos merkle $'
+
+# 28. a recorded network that is not a known network is refused; nothing is touched
+D="$T/d28"; existing "$D"; P="$D/.snapshot-previous"; mkdir -p "$P/blocks"; echo prev > "$P/blocks/data"
+echo "../../etc" > "$P/.network"; touch "$P/.moving-in"
+prepare_data_dir "$D" mainnet >/dev/null 2>&1; rc=$?
+expect "28 rc" "$rc" '^1$'
+expect "28 untouched" "$(cat "$D/blocks/data") $(cat "$P/blocks/data")" '^old prev$'
+
+# 29. as a normal user, a failed run that left an unreadable directory is still cleaned up
+evil hidden; place mainnet 970700 "$T/evil.tar.gz" bad-sha
+D=/tmp/d29; rm -rf "$D"; mkdir -p "$D"; chown nobody "$D"
+runuser -u nobody -- env SNAPSHOT_BASE_URL="$SNAPSHOT_BASE_URL" RESUME_DELAY=0 \
+  bash -c 'source /w/lib/snapshot_sync.sh x /tmp >/dev/null; set +e; sync_snapshot mainnet /tmp/d29' >/dev/null 2>&1; rc=$?
+expect "29 rc" "$rc" '^1$'
+expect "29 no staging" "$(no_staging "$D")" '^0$'
+rm -rf "$D"
+
+# 30. swap_in leaves the replaced data, marked complete, for the caller to delete
+#     after signals are handled again
+src30="$T/s30"; rm -rf "$src30"; mkdir -p "$src30"/{blocks,chainstate}; echo new > "$src30/blocks/data"
+D="$T/d30"; existing "$D"
+swap_in "$src30" "$D" "$D" mainnet >/dev/null 2>&1; rc=$?
+expect "30 rc" "$rc" '^0$'
+expect "30 new in place" "$(cat "$D/blocks/data")" '^new$'
+expect "30 old kept, complete" "$( [ -e "$D/.snapshot-previous/.complete" ] && [ -e "$D/.snapshot-previous/chainstate" ] && echo yes)" '^yes$'
 
 kill "$SERVER" 2>/dev/null; rm -rf "$T"; exit $fail

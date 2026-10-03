@@ -141,7 +141,7 @@ fetch_latest_info() {
 SNAPSHOT_FOLDERS=(blocks chainstate frozentxos merkle)
 
 # Download tuning; overridable for tests.
-RESUME_DELAY="${RESUME_DELAY:-2}"                 # first pause before a resume; doubles up to 60s
+RESUME_DELAY="${RESUME_DELAY:-2}"                 # pause before a resume; doubles while no progress, up to 60s
 STALL_SECONDS="${STALL_SECONDS:-60}"              # below 1KB/s for this long = stalled
 NO_PROGRESS_SECONDS="${NO_PROGRESS_SECONDS:-900}" # give up after this long without a byte
 
@@ -254,26 +254,43 @@ check_contents() {
     [ -z "$bad" ]
 }
 
+# remove_dir DIR: rm -rf that also works when an archive left a directory the
+# user cannot write into (e.g. mode 0300).
+remove_dir() {
+    [ -e "$1" ] || [ -L "$1" ] || return 0
+    rm -rf "$1" 2>/dev/null && return 0
+    chmod -R u+rwX "$1" 2>/dev/null
+    rm -rf "$1"
+}
+
 # prepare_data_dir DATA_DIR NETWORK: clear leftovers of an interrupted run.
 # .snapshot-staging is always disposable. .snapshot-previous holds the data a
-# swap moved aside, the target it came from (.target), and markers recording
+# swap moved aside, the network it was for (.network) and markers recording
 # how far the swap got, so a recovery never mixes old and new folders and
-# always restores into the directory the swap was working on. If anything
-# fails, .snapshot-previous is kept for a later run or manual recovery.
+# restores into DATA_DIR's directory for that network. A recorded network that
+# is not known is refused. If anything fails, .snapshot-previous is kept for a
+# later run or manual recovery.
 prepare_data_dir() {
     local data_dir="$1"
     local network="$2"
     local target prev d
     prev="${data_dir}/.snapshot-previous"
 
-    if ! rm -rf "${data_dir:?}/.snapshot-staging"; then
+    if ! remove_dir "${data_dir:?}/.snapshot-staging"; then
         echo_error "Could not remove ${data_dir}/.snapshot-staging." >&2
         return 1
     fi
     [ -d "$prev" ] || return 0
 
-    target=$(network_dir "$data_dir" "$network")
-    [ -s "$prev/.target" ] && target=$(cat "$prev/.target")
+    local recorded="$network"
+    [ -s "$prev/.network" ] && recorded=$(head -n 1 "$prev/.network")
+    case "$recorded" in
+        mainnet|testnet|regtest) ;;
+        *)
+            echo_error "${prev} records an unknown network; recover it by hand." >&2
+            return 1 ;;
+    esac
+    target=$(network_dir "$data_dir" "$recorded")
 
     if [ -e "$prev/.complete" ]; then
         :   # the new snapshot is fully in place; the old copy can go
@@ -300,11 +317,13 @@ prepare_data_dir() {
             fi
         done
     fi
-    rm -rf "$prev"
+    remove_dir "$prev"
 }
 
 # swap_in STAGING TARGET DATA_DIR NETWORK: replace all four folders with the
 # verified ones. Old folders are moved aside first; any failure puts them back.
+# On success the replaced data stays in .snapshot-previous, marked complete; the
+# caller deletes it once signals are handled again (it can be ~600GB).
 swap_in() {
     local staging="$1"
     local target="$2"
@@ -313,7 +332,7 @@ swap_in() {
     local prev="${data_dir}/.snapshot-previous"
     local d
 
-    rm -rf "$prev" && mkdir -p "$prev" && echo "$target" > "$prev/.target" || return 1
+    remove_dir "$prev" && mkdir -p "$prev" && echo "$network" > "$prev/.network" || return 1
     for d in "${SNAPSHOT_FOLDERS[@]}"; do
         if [ -e "$target/$d" ] || [ -L "$target/$d" ]; then
             if ! mv "$target/$d" "$prev/$d"; then
@@ -340,7 +359,6 @@ swap_in() {
     # on keeps the new data.
     rm -f "$prev/.moving-in"
     touch "$prev/.complete"
-    rm -rf "$prev" || echo_warning "Could not remove ${prev}; it holds the replaced data and can be deleted."
     return 0
 }
 
@@ -355,7 +373,7 @@ snapshot_cleanup() {
         kill_tree "$pid"
     done
     SNAP_PIDS=()
-    [ -n "$SNAP_STAGING" ] && rm -rf "$SNAP_STAGING"
+    [ -n "$SNAP_STAGING" ] && remove_dir "$SNAP_STAGING"
     [ -n "$SNAP_CTL" ] && rm -rf "$SNAP_CTL"
     SNAP_STAGING=""
     SNAP_CTL=""
@@ -466,8 +484,8 @@ sync_snapshot() {
         echo_error "The snapshot has unexpected content; it was not used."
     else
         echo_success "Checksum verified."
-        # The swap takes milliseconds; letting INT/TERM interrupt it halfway
-        # would leave the recovery to the next run.
+        # The swap itself takes milliseconds (renames only); letting INT/TERM
+        # interrupt it halfway would leave the recovery to the next run.
         trap '' INT TERM
         if swap_in "$staging" "$target_dir" "$data_dir" "$network"; then
             result=0
@@ -477,6 +495,10 @@ sync_snapshot() {
     trap - INT TERM
     snapshot_cleanup
     if (( result == 0 )); then
+        # The replaced data is marked complete, so an interruption here is safe.
+        echo_info "Removing the replaced blockchain data..."
+        remove_dir "${data_dir}/.snapshot-previous" \
+            || echo_warning "Could not remove ${data_dir}/.snapshot-previous; it holds the replaced data and can be deleted."
         echo ""
         echo_success "Snapshot download completed successfully."
     fi
