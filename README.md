@@ -65,8 +65,15 @@ cd svnode-quickstart
       as-is by the BSV Association). `<network>/latest.json` names the newest snapshot.
     - Both mainnet and testnet snapshots are pruned (contain recent blockchain data only)
     - One `.tar.gz` per snapshot, streamed and unpacked on the fly, so the archive never sits on disk
-    - Verified against its published SHA-256 before your data is touched; a failed or corrupt download leaves existing
-      data as it was. A dropped connection resumes where it stopped (HTTP range requests, up to 10 attempts).
+    - Checked against the SHA-256 published next to it before your data is touched. This catches corrupt and
+      truncated downloads; it is not a signature, since the checksum comes from the same host as the archive.
+    - Unpacked into a staging folder; only `blocks`, `chainstate`, `frozentxos` and `merkle` are accepted, without
+      the archive's owners or setuid bits. Existing data is replaced only after all checks pass, and a failed,
+      interrupted or corrupt download leaves it as it was.
+    - A dropped or stalled connection resumes where it stopped (HTTP range requests) as long as it keeps making
+      progress.
+    - Refreshing a node that already has data needs room for a second copy, because the old data is kept until the
+      new snapshot is verified. To refresh in place, stop the node and remove `blocks/` and `chainstate/` first.
     - Mainnet: ~210GB download, ~600GB once unpacked (refreshed daily)
     - Testnet: ~13GB download, ~30GB once unpacked (refreshed occasionally)
     - Uses `curl` and `tar`; `pigz` is used for faster unpacking when installed
@@ -340,4 +347,4 @@ implications before using them in different environments.
 - Use `./cli.sh verifychain` for additional validation
 - Monitor synchronization status and network consensus alignment
 
-**Validation**: SV Node automatically validates loaded snapshot data on startup, verifying block headers, chain integrity, and the UTXO set. The network consensus mechanism provides ongoing protection against invalid data.
+**Validation**: On startup SV Node verifies the most recent blocks of the loaded data (the last 6 by default); it does not re-validate the whole UTXO set. The network consensus mechanism provides ongoing protection against invalid data.

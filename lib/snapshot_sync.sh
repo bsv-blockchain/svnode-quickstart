@@ -98,9 +98,9 @@ check_snapshot_complete() {
 json_field() {
     local json="$1"
     local key="$2"
-    if [[ "$json" =~ \"$key\":\"([^\"]*)\" ]]; then
+    if [[ "$json" =~ \"$key\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]]; then
         echo "${BASH_REMATCH[1]}"
-    elif [[ "$json" =~ \"$key\":([0-9]+) ]]; then
+    elif [[ "$json" =~ \"$key\"[[:space:]]*:[[:space:]]*([0-9]+) ]]; then
         echo "${BASH_REMATCH[1]}"
     fi
 }
@@ -123,7 +123,8 @@ fetch_latest_info() {
     SNAP_SHA256=$(json_field "$json" sha256)
     SNAP_CREATED=$(json_field "$json" created)
 
-    if [[ ! "$SNAP_HEIGHT" =~ ^[0-9]+$ || -z "$SNAP_FILE" || ! "$SNAP_BYTES" =~ ^[0-9]+$ || ! "$SNAP_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+    if [[ ! "$SNAP_HEIGHT" =~ ^[0-9]+$ || "$SNAP_FILE" != "svnode-${network}-${SNAP_HEIGHT}.tar.gz" \
+          || ! "$SNAP_BYTES" =~ ^[1-9][0-9]*$ || ! "$SNAP_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
         echo_error "The snapshot information for ${network} is incomplete" >&2
         return 1
     fi
@@ -137,42 +138,208 @@ fetch_latest_info() {
     return 0
 }
 
-# fetch_resumable URL TOTAL_BYTES ERRFILE: writes the object to stdout. When a
-# connection drops mid-download it continues with an HTTP Range request from
-# the last byte received, so one long stream survives network hiccups. Bytes
-# are only ever appended in order; the checksum over the whole stream catches
-# anything that still goes wrong.
+SNAPSHOT_FOLDERS=(blocks chainstate frozentxos merkle)
+
+# Download tuning; overridable for tests.
+RESUME_DELAY="${RESUME_DELAY:-2}"                 # seconds between resume attempts
+STALL_SECONDS="${STALL_SECONDS:-60}"              # below 1KB/s for this long = stalled
+MAX_TRIES_WITHOUT_PROGRESS="${MAX_TRIES_WITHOUT_PROGRESS:-5}"
+
+# fetch_resumable URL TOTAL_BYTES CTL_DIR: writes the object to stdout. When a
+# connection drops or stalls mid-download it continues with an HTTP Range
+# request from the last byte received, so one long stream survives network
+# hiccups. Bytes are only ever appended in order, a resumed response must be
+# 206, and the checksum over the whole stream catches anything that still goes
+# wrong. Errors that a retry cannot fix (HTTP 4xx, a failed write because the
+# unpacking side died, e.g. a full disk) stop at once.
 fetch_resumable() {
     local url="$1"
     local total="$2"
-    local errfile="$3"
+    local ctl="$3"
     local offset=0
-    local attempt=0
-    local got
+    local stuck=0
+    local rc code got
 
     while (( offset < total )); do
-        attempt=$((attempt + 1))
-        if (( attempt > 10 )); then
-            echo_error "Giving up after 10 attempts at byte ${offset} of ${total}." >&2
+        if (( offset > 0 || stuck > 0 )); then
+            echo_warning "Connection dropped. Resuming at byte ${offset} of ${total}..." >&2
+            sleep "$RESUME_DELAY"
+        fi
+        # Body to fd 3 (the pipeline), transfer stats to a file: works with any curl.
+        rc=0
+        curl --silent --show-error --fail --globoff \
+             --connect-timeout 30 --speed-limit 1024 --speed-time "$STALL_SECONDS" \
+             --range "${offset}-$(( total - 1 ))" \
+             --output /dev/fd/3 --write-out '%{http_code} %{size_download}' \
+             "$url" 3>&1 >"$ctl/curl.out" 2>"$ctl/curl.err" || rc=$?
+        code=000; got=0
+        read -r code got < "$ctl/curl.out" || true
+        cat "$ctl/curl.err" >&2
+
+        # A resumed request answered with anything but 206 would restart the
+        # body from byte 0 and corrupt the stream.
+        if (( offset > 0 )) && [[ "$code" != 206 && "$code" != 000 ]]; then
+            echo_error "The server did not resume at byte ${offset} (HTTP ${code})." >&2
             return 1
         fi
-        if (( attempt > 1 )); then
-            echo_warning "Connection dropped. Resuming at byte ${offset} of ${total} (attempt ${attempt})..." >&2
-            sleep 2
+        case "$rc" in
+            0|7|18|28|35|52|55|56|92) ;;   # done, or a transient network failure
+            22)
+                if [[ "$code" != 5* ]]; then
+                    echo_error "Download failed: HTTP ${code}." >&2
+                    return 1
+                fi ;;
+            23)
+                echo_error "Writing the download failed (is the disk full?)." >&2
+                return 1 ;;
+            *)
+                echo_error "Download failed (curl error ${rc})." >&2
+                return 1 ;;
+        esac
+
+        offset=$(( offset + got ))
+        if (( got > 0 )); then
+            stuck=0
+        else
+            stuck=$(( stuck + 1 ))
+            if (( stuck >= MAX_TRIES_WITHOUT_PROGRESS )); then
+                echo_error "No progress after ${stuck} attempts at byte ${offset} of ${total}." >&2
+                return 1
+            fi
         fi
-        # %{stderr} sends the -w output to stderr, after any error message.
-        curl --silent --show-error --fail --range "${offset}-" \
-             --write-out '%{stderr}bytes=%{size_download}\n' "$url" 2>"$errfile"
-        got=$(grep -oE '^bytes=[0-9]+' "$errfile" | tail -1 | cut -d= -f2)
-        grep -v '^bytes=' "$errfile" >&2 || true
-        offset=$(( offset + ${got:-0} ))
     done
     return 0
 }
 
+# kill_tree PID: stop a process and everything it started.
+kill_tree() {
+    local child
+    for child in $(pgrep -P "$1" 2>/dev/null); do
+        kill_tree "$child"
+    done
+    kill "$1" 2>/dev/null || true
+}
+
+# check_contents STAGING: only the four snapshot folders, as real directories,
+# holding only regular files and directories, nothing setuid or setgid.
+check_contents() {
+    local staging="$1"
+    local entry name
+    shopt -s dotglob nullglob
+    for entry in "$staging"/*; do
+        name=$(basename "$entry")
+        case " ${SNAPSHOT_FOLDERS[*]} " in
+            *" $name "*) ;;
+            *) shopt -u dotglob nullglob; return 1 ;;
+        esac
+        if [ -L "$entry" ] || [ ! -d "$entry" ]; then
+            shopt -u dotglob nullglob
+            return 1
+        fi
+    done
+    shopt -u dotglob nullglob
+    [ -d "$staging/blocks" ] && [ -d "$staging/chainstate" ] || return 1
+    [ -z "$(find "$staging" \( \( ! -type f ! -type d \) -o -perm /6000 \) -print -quit)" ]
+}
+
+# prepare_data_dir DATA_DIR NETWORK: clear leftovers of an interrupted run.
+# .snapshot-staging is always disposable. .snapshot-previous holds the data a
+# swap moved aside; markers record how far the swap got, so a recovery never
+# mixes old and new folders.
+prepare_data_dir() {
+    local data_dir="$1"
+    local network="$2"
+    local target prev d
+    target=$(network_dir "$data_dir" "$network")
+    prev="${data_dir}/.snapshot-previous"
+
+    rm -rf "${data_dir:?}/.snapshot-staging"
+    [ -d "$prev" ] || return 0
+
+    if [ -e "$prev/.complete" ]; then
+        :   # the new snapshot is fully in place; the old copy can go
+    elif [ -e "$prev/.moving-in" ]; then
+        echo_warning "A previous snapshot swap was interrupted; restoring the old data." >&2
+        mkdir -p "$target"
+        for d in "${SNAPSHOT_FOLDERS[@]}"; do
+            rm -rf "${target:?}/$d"
+            if [ -e "$prev/$d" ]; then
+                mv "$prev/$d" "$target/$d" || return 1
+            fi
+        done
+    else
+        echo_warning "A previous snapshot swap was interrupted; restoring the old data." >&2
+        mkdir -p "$target"
+        for d in "${SNAPSHOT_FOLDERS[@]}"; do
+            if [ -e "$prev/$d" ] && [ ! -e "$target/$d" ]; then
+                mv "$prev/$d" "$target/$d" || return 1
+            fi
+        done
+    fi
+    rm -rf "$prev"
+}
+
+# swap_in STAGING TARGET DATA_DIR: replace all four folders with the verified
+# ones. Old folders are moved aside first; any failure puts them back.
+swap_in() {
+    local staging="$1"
+    local target="$2"
+    local prev="${3}/.snapshot-previous"
+    local d
+
+    rm -rf "$prev" && mkdir -p "$prev" || return 1
+    for d in "${SNAPSHOT_FOLDERS[@]}"; do
+        if [ -e "$target/$d" ] || [ -L "$target/$d" ]; then
+            if ! mv "$target/$d" "$prev/$d"; then
+                prepare_data_dir "$3" "$SWAP_NETWORK"
+                return 1
+            fi
+        fi
+    done
+    touch "$prev/.moving-in"
+    for d in "${SNAPSHOT_FOLDERS[@]}"; do
+        if [ -d "$staging/$d" ]; then
+            if ! mv "$staging/$d" "$target/$d"; then
+                echo_error "Could not move the new ${d} into place; restoring the old data."
+                prepare_data_dir "$3" "$SWAP_NETWORK"
+                return 1
+            fi
+        fi
+    done
+    touch "$prev/.complete"
+    rm -rf "$prev" || echo_warning "Could not remove ${prev}; it holds the replaced data and can be deleted."
+    return 0
+}
+
+# State for the INT/TERM handler of sync_snapshot.
+SNAP_STAGING=""
+SNAP_CTL=""
+SNAP_PIDS=()
+
+snapshot_cleanup() {
+    local pid
+    for pid in "${SNAP_PIDS[@]}"; do
+        kill_tree "$pid"
+    done
+    SNAP_PIDS=()
+    [ -n "$SNAP_STAGING" ] && rm -rf "$SNAP_STAGING"
+    [ -n "$SNAP_CTL" ] && rm -rf "$SNAP_CTL"
+    SNAP_STAGING=""
+    SNAP_CTL=""
+}
+
+snapshot_interrupted() {
+    trap - INT TERM
+    snapshot_cleanup
+    echo "" >&2
+    echo_error "Snapshot sync interrupted; nothing was changed." >&2
+    exit 130
+}
+
 # Streams the archive once: curl | tee (into sha256sum) | gunzip | tar. It
 # unpacks into a staging directory and only replaces the node's folders after
-# the checksum matches, so a failed or corrupt download leaves the data as it was.
+# the checksum matches and the content checks out, so a failed, interrupted or
+# corrupt download leaves the data as it was.
 sync_snapshot() {
     local network="$1"
     local data_dir="$2"
@@ -186,7 +353,7 @@ sync_snapshot() {
     target_dir=$(network_dir "$data_dir" "$network")
     local url="${SNAPSHOT_BASE_URL}/${network}/${SNAP_HEIGHT}/${SNAP_FILE}"
     local staging="${data_dir}/.snapshot-staging"
-    local size_gb=$(( ${SNAP_BYTES:-0} / 1000000000 ))
+    local size_gb=$(( 10#${SNAP_BYTES} / 1000000000 ))
 
     echo_info "Downloading ${network} snapshot: ${url}"
     echo_info "Snapshot height: ${SNAP_HEIGHT}, download size: ~${size_gb}GB"
@@ -195,74 +362,90 @@ sync_snapshot() {
     echo ""
 
     if check_existing_data "$data_dir" "$network"; then
-        echo_info "Updating existing blockchain data..."
+        echo_info "The existing data stays in place until the new snapshot is verified."
     else
         echo_info "Performing initial blockchain sync..."
     fi
 
+    prepare_data_dir "$data_dir" "$network" || return 1
+
     local unpack="gzip -dc"
     command -v pigz &> /dev/null && unpack="pigz -dc"
 
-    rm -rf "$staging"
-    mkdir -p "$staging" "$target_dir"
-    mkfifo "$staging/.sha256.fifo"
-    sha256sum < "$staging/.sha256.fifo" | cut -c1-64 > "$staging/.sha256" &
-    local sha_pid=$!
+    # Control files (FIFO, checksum, curl output) live outside the directory
+    # tar writes into, so the archive cannot overwrite them.
+    local ctl
+    if ! ctl=$(mktemp -d) || ! mkfifo "$ctl/sha256.fifo"; then
+        echo_error "Could not create a temporary directory with a FIFO."
+        [ -n "${ctl:-}" ] && rm -rf "$ctl"
+        return 1
+    fi
+    if ! mkdir -p "$staging" "$target_dir"; then
+        rm -rf "$ctl"
+        return 1
+    fi
+    SNAP_STAGING="$staging"
+    SNAP_CTL="$ctl"
+    SNAP_PIDS=()
+    trap snapshot_interrupted INT TERM
 
-    # Progress: report the downloaded share every minute while it runs.
+    sha256sum < "$ctl/sha256.fifo" > "$ctl/sha256" &
+    local sha_pid=$!
+    SNAP_PIDS+=("$sha_pid")
+
+    # Progress: report the unpacked size every minute while it runs.
     local progress_pid=""
     if [ -t 1 ]; then
         ( while sleep 60; do
-              local done_bytes
               done_bytes=$(du -sb "$staging" 2>/dev/null | cut -f1)
               echo_info "Unpacked so far: $(( ${done_bytes:-0} / 1000000000 ))GB"
           done ) &
         progress_pid=$!
+        SNAP_PIDS+=("$progress_pid")
     fi
 
+    # Run in the background and wait, so INT/TERM are handled at once.
+    ( set -o pipefail
+      fetch_resumable "$url" "$SNAP_BYTES" "$ctl" \
+        | tee "$ctl/sha256.fifo" \
+        | $unpack \
+        | tar -x --no-same-owner --no-same-permissions -f - -C "$staging" ) &
+    local pipe_pid=$!
+    SNAP_PIDS+=("$pipe_pid")
     local ok=true
-    if ! (set -o pipefail
-          fetch_resumable "$url" "${SNAP_BYTES:-0}" "$staging/.curl.err" \
-            | tee "$staging/.sha256.fifo" \
-            | $unpack \
-            | tar -xf - -C "$staging"); then
-        ok=false
-    fi
-    [ -n "$progress_pid" ] && kill "$progress_pid" 2>/dev/null
-    wait "$sha_pid" || true
-    local got
-    got=$(cat "$staging/.sha256" 2>/dev/null)
+    wait "$pipe_pid" || ok=false
 
+    [ -n "$progress_pid" ] && kill_tree "$progress_pid"
+    if $ok; then
+        wait "$sha_pid" || ok=false
+    else
+        kill_tree "$sha_pid"
+    fi
+    local got
+    got=$(cut -c1-64 "$ctl/sha256" 2>/dev/null)
+
+    local result=1
     if ! $ok; then
         echo_error "Download or extraction failed."
-        rm -rf "$staging"
-        return 1
-    fi
-    if [[ "$got" != "$SNAP_SHA256" ]]; then
+    elif [[ "$got" != "$SNAP_SHA256" ]]; then
         echo_error "Checksum mismatch: expected ${SNAP_SHA256}, got ${got:-none}."
-        rm -rf "$staging"
-        return 1
-    fi
-    if [ ! -d "$staging/blocks" ] || [ ! -d "$staging/chainstate" ]; then
-        echo_error "The snapshot does not contain blocks and chainstate."
-        rm -rf "$staging"
-        return 1
-    fi
-    echo_success "Checksum verified."
-
-    # Replace, not merge: files left over from older data must not mix in.
-    local dir
-    for dir in blocks chainstate frozentxos merkle; do
-        if [ -d "$staging/$dir" ]; then
-            rm -rf "${target_dir:?}/$dir"
-            mv "$staging/$dir" "$target_dir/$dir"
+    elif ! check_contents "$staging"; then
+        echo_error "The snapshot has unexpected content; it was not used."
+    else
+        echo_success "Checksum verified."
+        SWAP_NETWORK="$network"
+        if swap_in "$staging" "$target_dir" "$data_dir"; then
+            result=0
         fi
-    done
-    rm -rf "$staging"
+    fi
 
-    echo ""
-    echo_success "Snapshot download completed successfully."
-    return 0
+    trap - INT TERM
+    snapshot_cleanup
+    if (( result == 0 )); then
+        echo ""
+        echo_success "Snapshot download completed successfully."
+    fi
+    return $result
 }
 
 verify_sync() {
@@ -332,10 +515,18 @@ main() {
     # unpacked size is needed)
     local required_space="${SNAPSHOT_SPACE_GB[$NETWORK]:-650}"
 
+    # Leftovers of an interrupted run would otherwise count against free space.
+    prepare_data_dir "$DATA_DIR" "$NETWORK" || true
+
     echo_info "Checking disk space requirements..."
 
     if ! check_disk_space "$required_space"; then
         echo_error "Insufficient disk space for snapshot."
+        if check_existing_data "$DATA_DIR" "$NETWORK" >/dev/null; then
+            echo_info "The existing blockchain data is kept until the new snapshot is verified,"
+            echo_info "so a refresh needs room for a second copy (${required_space}GB free)."
+            echo_info "To refresh in place, stop the node and remove blocks/ and chainstate/ first."
+        fi
         return 1
     fi
 
