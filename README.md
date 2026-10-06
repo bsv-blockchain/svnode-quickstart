@@ -279,7 +279,7 @@ To update your SV Node to a newer version:
 ```bash
 # Example update process
 ./stop.sh
-./lib/download_node.sh 1.2.2 ./bsv
+./lib/download_node.sh 1.2.3 ./bsv
 ./start.sh
 ```
 
